@@ -391,7 +391,7 @@ function Show-Gui {
         $cell = $row.Cells['Status']
         $cell.Value = $text
         $cell.Style.ForeColor = $color
-        $cell.Style.SelectionForeColor = $color
+        # Keep the default (white) text on a selected row: green/red on the blue highlight is hard to read.
         $cell.ToolTipText = $details
         $row.Tag.Details = $details
     }
