@@ -8,7 +8,7 @@ It's a single PowerShell script. It uses the OpenSSH client built into Windows 1
 
 | File | Purpose |
 |---|---|
-| `CakeSwitch-GUI.cmd` | Double-click to open the window: the device list with **On / Off / Toggle / Refresh all / Add / Remove / Setup SSH key** buttons |
+| `CakeSwitch-GUI.cmd` | Double-click to open the window: the device list with **On / Off / Refresh all / Add / Remove / Setup SSH key** buttons |
 | `CakeSwitch.cmd` | Command-line launcher (handy for shortcuts and Task Scheduler) |
 | `CakeSwitch.ps1` | The actual script |
 | `cake-switch.json` | Your device list. It's created and updated automatically by the GUI. See `cake-switch.example.json` |
@@ -19,7 +19,7 @@ The window shows one row per OpenWrt device, with **Name, IP address, User, Port
 
 - **Change an IP address (or anything else) at any time**: double-click the cell (or select it and press F2), type, and press Enter. The change is saved right away, and the device's status is re-read.
 - **Add device / Remove**: manage the list. Removing a device only removes it from the list; nothing changes on the device.
-- **On / Off / Toggle** act on the selected row(s). Ctrl-click or Shift-click to switch several devices at once. Devices are contacted in parallel, so an offline AP doesn't hold up the others.
+- **On / Off** act on the selected row(s). Ctrl-click or Shift-click to switch several devices at once. Devices are contacted in parallel, so an offline AP doesn't hold up the others.
 - **Interface**: leave it empty to switch every SQM queue on that device. Set it (e.g. `pppoe-wan` on the router, `br-lan` or `eth0` on an AP) to switch only that queue.
 - Double-click a **Status** cell to see details (queues, interfaces, qdisc, errors).
 
@@ -36,7 +36,7 @@ While the app runs, a dot in the notification area (next to the clock) shows the
 | Orange | Error, or SQM enabled but CAKE not active |
 | Grey | Checking or switching |
 
-- **Left-click** the dot to open the window. **Right-click** it for *Toggle / Turn on / Turn off / Refresh* (for the main device), *Open window* and *Exit*.
+- **Left-click** the dot to open the window. **Right-click** it for *Turn on / Turn off / Refresh* (for the main device), *Open window* and *Exit*.
 - Closing or minimising the window only hides it. The app keeps running in the tray until you choose **Exit**.
 - The main device is re-checked every minute, so the dot also follows changes made in LuCI.
 - To make a different device the main one, put it first in `cake-switch.json`.
@@ -56,11 +56,11 @@ CakeSwitch.cmd -Action List                       # show saved devices
 CakeSwitch.cmd -Action Status                     # status of all devices
 CakeSwitch.cmd -Action Off -Device "Main router"
 CakeSwitch.cmd -Action On -Device "AP*"           # wildcards match name or IP
-CakeSwitch.cmd -Action Toggle -Device *           # all devices
+CakeSwitch.cmd -Action Off -Device *              # all devices
 CakeSwitch.cmd -Action Off -Router 192.168.1.9    # any IP, without saving it
 CakeSwitch.cmd -Action SetupKey -Device "AP 2"
 ```
-If you have more than one device, `On` / `Off` / `Toggle` need `-Device`, so you can't switch everything by accident. On failure the exit code is `1`.
+If you have more than one device, `On` / `Off` need `-Device`, so you can't switch everything by accident. On failure the exit code is `1`.
 
 You can open several windows at once. You can also keep separate device lists with `-ConfigFile other.json`.
 
@@ -68,7 +68,7 @@ You can open several windows at once. You can also keep separate device lists wi
 
 Right-click the desktop → *New → Shortcut* and point it to, for example:
 ```
-"C:\path\to\cake-switch\CakeSwitch.cmd" -Action Toggle -Device "AP 1"
+"C:\path\to\cake-switch\CakeSwitch.cmd" -Action On -Device "AP 1"
 ```
 You can also give a shortcut a keyboard hotkey in its Properties.
 
