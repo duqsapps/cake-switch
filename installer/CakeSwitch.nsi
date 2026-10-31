@@ -28,7 +28,8 @@ VIAddVersionKey "ProductName" "${APPNAME}"
 VIAddVersionKey "FileDescription" "${APPNAME} setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" ""
+VIAddVersionKey "CompanyName" "DuqsApps"
+VIAddVersionKey "LegalCopyright" "Copyright (c) 2026 DuqsApps. MIT License."
 
 !define MUI_ICON "cakeswitch.ico"
 !define MUI_UNICON "cakeswitch.ico"
@@ -82,7 +83,7 @@ Section "${APPNAME}" SecApp
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "${UNINSTKEY}" "DisplayName" "${APPNAME}"
   WriteRegStr HKLM "${UNINSTKEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "${APPNAME}"
+  WriteRegStr HKLM "${UNINSTKEY}" "Publisher" "DuqsApps"
   WriteRegStr HKLM "${UNINSTKEY}" "DisplayIcon" "$INSTDIR\cakeswitch.ico"
   WriteRegStr HKLM "${UNINSTKEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "${UNINSTKEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
