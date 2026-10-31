@@ -22,13 +22,13 @@
 .EXAMPLE
     .\CakeSwitch.ps1 -Action On -Device AP*            # wildcards match name or address
 .EXAMPLE
-    .\CakeSwitch.ps1 -Action Toggle -Router 192.168.1.3 -Interface br-lan   # ad-hoc device, not saved
+    .\CakeSwitch.ps1 -Action Off -Router 192.168.1.3 -Interface br-lan      # ad-hoc device, not saved
 .EXAMPLE
     .\CakeSwitch.ps1 -Action SetupKey -Device "AP 1"   # one-time: install your SSH key on a device
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Gui', 'Status', 'On', 'Off', 'Toggle', 'List', 'SetupKey')]
+    [ValidateSet('Gui', 'Status', 'On', 'Off', 'List', 'SetupKey')]
     [string]$Action = 'Gui',
     # Saved device(s) to act on, by name or address; wildcards allowed. Default for Status/List: all.
     [string[]]$Device,
@@ -152,13 +152,6 @@ if [ -z "$secs" ]; then
     exit 2
 fi
 
-if [ "$ACTION" = "toggle" ]; then
-    ACTION=on
-    for s in $secs; do
-        [ "$(uci -q get sqm.$s.enabled)" = "1" ] && ACTION=off
-    done
-fi
-
 if [ "$ACTION" = "on" ] || [ "$ACTION" = "off" ]; then
     v=0; [ "$ACTION" = "on" ] && v=1
     for s in $secs; do uci set sqm.$s.enabled=$v; done
@@ -181,7 +174,7 @@ done
 
 # --- running it: jobs are started without waiting, so several devices are handled in parallel ---
 
-function Start-CakeJob($d, [ValidateSet('on', 'off', 'toggle', 'status')][string]$Verb) {
+function Start-CakeJob($d, [ValidateSet('on', 'off', 'status')][string]$Verb) {
     $job = [pscustomobject]@{ Device = $d; Process = $null; Out = $null; Err = $null; Started = Get-Date; Error = $null }
     $problem = Get-DeviceProblem $d
     if ($problem) { $job.Error = $problem; return $job }
@@ -318,7 +311,7 @@ function Show-Gui {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'CAKE Switch'
     $form.ClientSize = New-Object System.Drawing.Size(780, 360)
-    # Wide enough for the button row (it ends at x=762).
+    # Wide enough for the button row (it ends at x=656).
     $form.MinimumSize = New-Object System.Drawing.Size(800, 300)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
@@ -354,7 +347,7 @@ function Show-Gui {
 
     $buttons = @{}
     $x = 12
-    foreach ($b in @(@('On', 'On'), @('Off', 'Off'), @('Toggle', 'Toggle'), @('Refresh', 'Refresh all'),
+    foreach ($b in @(@('On', 'On'), @('Off', 'Off'), @('Refresh', 'Refresh all'),
                      @('Add', 'Add device'), @('Remove', 'Remove'), @('Key', 'Setup SSH key'))) {
         $btn = New-Object System.Windows.Forms.Button
         $btn.Text = $b[1]
@@ -486,7 +479,6 @@ function Show-Gui {
 
     $buttons['On'].Add_Click({ Invoke-Safe { Start-Selected 'on' } })
     $buttons['Off'].Add_Click({ Invoke-Safe { Start-Selected 'off' } })
-    $buttons['Toggle'].Add_Click({ Invoke-Safe { Start-Selected 'toggle' } })
     $buttons['Refresh'].Add_Click({
         Invoke-Safe {
             if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
@@ -602,8 +594,6 @@ function Show-Gui {
     }
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
-    $miToggle = $menu.Items.Add('Toggle')
-    $miToggle.Font = New-Object System.Drawing.Font -ArgumentList $menu.Font, ([System.Drawing.FontStyle]::Bold)
     $miOn = $menu.Items.Add('Turn on')
     $miOff = $menu.Items.Add('Turn off')
     $miRefresh = $menu.Items.Add('Refresh')
@@ -614,13 +604,11 @@ function Show-Gui {
         Invoke-Safe {
             $row = Get-MainRow
             $name = if ($row) { "$($row.Cells['Name'].Value)".Trim() } else { '' }
-            $miToggle.Text = if ($name) { "Toggle CAKE on $name" } else { 'Toggle' }
             $miOn.Text = if ($name) { "Turn on ($name)" } else { 'Turn on' }
             $miOff.Text = if ($name) { "Turn off ($name)" } else { 'Turn off' }
-            foreach ($mi in @($miToggle, $miOn, $miOff, $miRefresh)) { $mi.Enabled = [bool]$row }
+            foreach ($mi in @($miOn, $miOff, $miRefresh)) { $mi.Enabled = [bool]$row }
         }
     })
-    $miToggle.Add_Click({ Invoke-Safe { Start-Main 'toggle' } })
     $miOn.Add_Click({ Invoke-Safe { Start-Main 'on' } })
     $miOff.Add_Click({ Invoke-Safe { Start-Main 'off' } })
     $miRefresh.Add_Click({ Invoke-Safe { Start-Main 'status' } })
