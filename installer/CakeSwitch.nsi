@@ -1,12 +1,13 @@
-; CAKE Switch installer (NSIS 3). Build:  makensis -DVERSION=1.0.0 installer/CakeSwitch.nsi
+; CAKE Switch installer (NSIS 3). Build:  makensis installer/CakeSwitch.nsi
 ; Installs into Program Files, adds a Start menu entry (optional desktop icon) and an uninstaller.
 ; The device list is kept per user in %APPDATA%\CAKE Switch (see CakeSwitch.installed below).
 
 Unicode true
 !include "MUI2.nsh"
 
+; The version comes from $AppVersion in CakeSwitch.ps1 (override with -DVERSION=x.y.z).
 !ifndef VERSION
-  !define VERSION "1.0.0"
+  !searchparse /file "..\CakeSwitch.ps1" "$AppVersion = '" VERSION "'"
 !endif
 !define APPNAME "CAKE Switch"
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\CAKE Switch"
@@ -37,6 +38,7 @@ VIAddVersionKey "LegalCopyright" ""
 !define MUI_FINISHPAGE_RUN_FUNCTION StartApp
 
 !insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_LICENSE "..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
@@ -66,6 +68,8 @@ Section "${APPNAME}" SecApp
   File "..\CakeSwitch.cmd"
   File "..\CakeSwitch-GUI.cmd"
   File "..\README.md"
+  File "..\LICENSE"
+  File "..\CHANGELOG.md"
   File "..\cake-switch.example.json"
   File "cakeswitch.ico"
   ; Marker: tells CakeSwitch.ps1 to keep the device list in %APPDATA%\CAKE Switch.
@@ -112,6 +116,8 @@ Section "Uninstall"
   Delete "$INSTDIR\CakeSwitch.cmd"
   Delete "$INSTDIR\CakeSwitch-GUI.cmd"
   Delete "$INSTDIR\README.md"
+  Delete "$INSTDIR\LICENSE"
+  Delete "$INSTDIR\CHANGELOG.md"
   Delete "$INSTDIR\cake-switch.example.json"
   Delete "$INSTDIR\cakeswitch.ico"
   Delete "$INSTDIR\CakeSwitch.installed"

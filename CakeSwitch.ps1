@@ -29,7 +29,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('Gui', 'Status', 'On', 'Off', 'List', 'SetupKey')]
+    [ValidateSet('Gui', 'Status', 'On', 'Off', 'List', 'SetupKey', 'Version')]
     [string]$Action = 'Gui',
     # Saved device(s) to act on, by name or address; wildcards allowed. Default for Status/List: all.
     [string[]]$Device,
@@ -47,6 +47,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
+$AppVersion = '1.0.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -357,7 +359,7 @@ function Show-Gui {
     }
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = 'CAKE Switch'
+    $form.Text = "CAKE Switch $AppVersion"
     $form.ClientSize = New-Object System.Drawing.Size(830, 360)
     # Wide enough for the button row and the "Start with Windows" box (about x=810).
     $form.MinimumSize = New-Object System.Drawing.Size(850, 300)
@@ -752,6 +754,7 @@ function Get-TargetDevices {
 }
 
 switch ($Action) {
+    'Version' { Write-Output "CAKE Switch $AppVersion" }
     'Gui' { Show-Gui }
     'List' {
         Get-TargetDevices | Format-Table Name, Address, User, Port, Interface -AutoSize | Out-String -Width 200 | Write-Output

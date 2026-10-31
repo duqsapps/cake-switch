@@ -6,12 +6,12 @@ It's a single PowerShell script. It uses the OpenSSH client built into Windows 1
 
 ## Install
 
-Run **`CakeSwitch-Setup-<version>.exe`** and click through it (Windows asks for admin rights, because the app goes into `C:\Program Files\CAKE Switch`). You get a **CAKE Switch** entry in the Start menu, an optional desktop icon, and an uninstaller under *Settings > Apps*.
+Download **`CakeSwitch-Setup-<version>.exe`** from the [Releases](../../releases) page, run it and click through it (Windows asks for admin rights, because the app goes into `C:\Program Files\CAKE Switch`). You get a **CAKE Switch** entry in the Start menu, an optional desktop icon, and an uninstaller under *Settings > Apps*.
 
 - The installed app keeps its device list per user, in `%APPDATA%\CAKE Switch\cake-switch.json`. To keep a list you already have, copy your old `cake-switch.json` there.
 - The setup program isn't code-signed, so Windows SmartScreen may warn about an unknown publisher: click *More info > Run anyway*.
 - Uninstalling removes the app, its shortcuts and your "Start with Windows" entry. The device list in `%APPDATA%` is kept.
-- To build the setup program yourself: install NSIS 3 and run `makensis -DVERSION=1.0.0 installer\CakeSwitch.nsi` (also works on Linux).
+- To build the setup program yourself: install NSIS 3 and run `makensis installer\CakeSwitch.nsi` (also works on Linux). The version comes from `$AppVersion` in `CakeSwitch.ps1`; `CakeSwitch.cmd -Action Version` prints it, and the window title shows it.
 
 You can also run it without installing, straight from this folder, as described below.
 
@@ -102,3 +102,7 @@ The status is then read back with `uci` and `tc qdisc show`, so "ON" means a `ca
 - **"no SQM queues found"**: install and configure `luci-app-sqm` on that device first.
 - **"Enabled, not active"**: SQM is enabled but no cake qdisc is installed. Either the queue uses another qdisc (e.g. `fq_codel`) or SQM failed to start. Check `logread | grep SQM` on the router.
 - **Very old router firmware** whose dropbear doesn't support ed25519 keys: create an RSA key with `ssh-keygen -t rsa -b 4096 -f %USERPROFILE%\.ssh\id_rsa_router`. Then set `"KeyFile"` in `cake-switch.json` to that path and run the key setup again.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Changes are listed in [CHANGELOG.md](CHANGELOG.md).
