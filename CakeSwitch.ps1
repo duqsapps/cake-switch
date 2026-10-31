@@ -41,6 +41,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$ScriptPath = $PSCommandPath
+$ConfigFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigFile)
 
 # --- configuration -----------------------------------------------------------------------------
 # cake-switch.json:
@@ -126,8 +128,8 @@ function Get-SshArgs($d) {
 
 # --- the shell script that runs on the device --------------------------------------------------
 # Prints machine-readable lines:
-#   QUEUE <section> <interface> <enabled 0|1> <qdisc>
-#   ACTIVE <0|1>       (1 = a cake qdisc is currently installed)
+#   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1>
+#         (active = a cake qdisc is installed on the interface or its ifb4<interface>; empty fields are '-')
 #   ERROR <message>
 
 $RemoteScript = @'
@@ -153,14 +155,21 @@ fi
 if [ "$ACTION" = "on" ] || [ "$ACTION" = "off" ]; then
     v=0; [ "$ACTION" = "on" ] && v=1
     for s in $secs; do uci set sqm.$s.enabled=$v; done
-    uci commit sqm
+    if ! uci commit sqm; then echo "ERROR uci commit sqm failed"; exit 3; fi
     /etc/init.d/sqm restart >/dev/null 2>&1
 fi
 
 for s in $secs; do
-    echo "QUEUE $s $(uci -q get sqm.$s.interface) $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc)"
+    i=$(uci -q get sqm.$s.interface)
+    a=0
+    if [ -n "$i" ]; then
+        ifb=$(echo "ifb4$i" | cut -c 1-15)
+        for dev in "$i" "$ifb"; do
+            tc qdisc show dev "$dev" 2>/dev/null | grep -q '^qdisc cake ' && a=1
+        done
+    fi
+    echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a"
 done
-if tc qdisc show 2>/dev/null | grep -q '^qdisc cake '; then echo "ACTIVE 1"; else echo "ACTIVE 0"; fi
 '@
 
 # --- running it: jobs are started without waiting, so several devices are handled in parallel ---
@@ -185,7 +194,9 @@ function Start-CakeJob($d, [ValidateSet('on', 'off', 'toggle', 'status')][string
         $job.Process = [System.Diagnostics.Process]::Start($psi)
         $job.Out = $job.Process.StandardOutput.ReadToEndAsync()
         $job.Err = $job.Process.StandardError.ReadToEndAsync()
-        $script = "ACTION=$Verb`nIFACE=$($d.Interface)`n" + $RemoteScript
+        # The leading newline keeps a UTF-8 BOM, which .NET Framework writes to stdin when the console
+        # code page is 65001, on a line of its own instead of corrupting "ACTION=...".
+        $script = "`nACTION=$Verb`nIFACE=$($d.Interface)`n" + $RemoteScript
         $job.Process.StandardInput.Write($script.Replace("`r`n", "`n"))
         $job.Process.StandardInput.Close()
     } catch {
@@ -216,11 +227,11 @@ function Complete-CakeJob($job) {
         $f = $line.Trim() -split '\s+'
         switch ($f[0]) {
             'QUEUE' {
-                $q = [pscustomobject]@{ Section = $f[1]; Interface = $f[2]; Enabled = ($f[3] -eq '1'); Qdisc = $f[4] }
+                $q = [pscustomobject]@{ Section = $f[1]; Interface = $f[2]; Enabled = ($f[3] -eq '1'); Qdisc = $f[4]; Active = ($f[5] -eq '1') }
                 $result.Queues += $q
                 if ($q.Enabled) { $result.Enabled = $true }
+                if ($q.Active) { $result.Active = $true }
             }
-            'ACTIVE' { $result.Active = ($f[1] -eq '1') }
             'ERROR' { $result.Error = ($f[1..($f.Count - 1)] -join ' ') }
         }
     }
@@ -248,7 +259,7 @@ function Format-Status($r) {
         $lines += '  (qdisc may not be cake, or SQM failed to start - check: logread | grep SQM)'
     }
     foreach ($q in $r.Queues) {
-        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc
+        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active
     }
     return $lines -join "`r`n"
 }
@@ -265,7 +276,8 @@ function Install-SshKey($d) {
         Write-Host "Creating SSH key $key (no passphrase, so switching works without prompting)..."
         $keygen = Join-Path (Split-Path (Get-SshExe)) 'ssh-keygen.exe'
         # Windows PowerShell 5.1 drops empty native arguments, so it needs '""' to pass an empty passphrase.
-        $empty = if ($PSVersionTable.PSVersion.Major -ge 7 -and $PSNativeCommandArgumentPassing -ne 'Legacy') { '' } else { '""' }
+        # PowerShell 7.0-7.2 drop it too; only 7.3+ (outside Legacy mode) pass '' through.
+        $empty = if ($PSVersionTable.PSVersion -ge [version]'7.3' -and $PSNativeCommandArgumentPassing -ne 'Legacy') { '' } else { '""' }
         & $keygen -q -t ed25519 -N $empty -f $key
         if ($LASTEXITCODE -ne 0) { throw 'ssh-keygen failed.' }
     }
@@ -293,7 +305,8 @@ function Show-Gui {
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'CAKE Switch'
     $form.ClientSize = New-Object System.Drawing.Size(780, 360)
-    $form.MinimumSize = New-Object System.Drawing.Size(640, 300)
+    # Wide enough for the button row (it ends at x=762).
+    $form.MinimumSize = New-Object System.Drawing.Size(800, 300)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -340,6 +353,12 @@ function Show-Gui {
         $gap = 106
         if ($b[0] -eq 'Refresh') { $gap = 120 }
         $x += $gap
+    }
+
+    # Event handlers run inside the WinForms message loop: an exception escaping one would show .NET's
+    # "unhandled exception" dialog (or close the window), so every handler goes through this.
+    function Invoke-Safe([scriptblock]$Body) {
+        try { & $Body } catch { [void][System.Windows.Forms.MessageBox]::Show("Error: $($_.Exception.Message)", 'CAKE Switch') }
     }
 
     function Add-DeviceRow($d) {
@@ -390,25 +409,33 @@ function Show-Gui {
             $job = $row.Tag.Job
             if (-not $job -or -not (Test-CakeJobDone $job)) { continue }
             $row.Tag.Job = $null
-            try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Error = $_.Exception.Message; Queues = @() } }
-            $state = Get-StateText $r
-            $text = if ($r.Error) { "Error: $($r.Error)" } elseif ($state -eq 'ON') { 'CAKE is ON' } elseif ($state -eq 'OFF') { 'CAKE is OFF' } else { $state }
-            $color = switch ($state) {
-                'ON' { [System.Drawing.Color]::ForestGreen }
-                'OFF' { [System.Drawing.Color]::Firebrick }
-                default { [System.Drawing.Color]::DarkOrange }
-            }
-            Set-RowStatus $row $text $color (Format-Status $r)
-            if ($row.Tag.Next) {
-                $verb = $row.Tag.Next
+            # No message boxes in here: this runs every 200 ms. Errors go into the row's status instead.
+            try {
+                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @() } }
+                $state = Get-StateText $r
+                $text = if ($r.Error) { "Error: $($r.Error)" } elseif ($state -eq 'ON') { 'CAKE is ON' } elseif ($state -eq 'OFF') { 'CAKE is OFF' } else { $state }
+                $color = switch ($state) {
+                    'ON' { [System.Drawing.Color]::ForestGreen }
+                    'OFF' { [System.Drawing.Color]::Firebrick }
+                    default { [System.Drawing.Color]::DarkOrange }
+                }
+                Set-RowStatus $row $text $color (Format-Status $r)
+                if ($row.Tag.Next) {
+                    $verb = $row.Tag.Next
+                    $row.Tag.Next = $null
+                    Start-Row $row $verb
+                }
+            } catch {
                 $row.Tag.Next = $null
-                Start-Row $row $verb
+                try { $row.Cells['Status'].Value = "Error: $($_.Exception.Message)" } catch { }
             }
         }
     })
 
     $grid.Add_CellValidating({
         param($s, $e)
+        # Also fires whenever the current cell changes or the grid loses focus; only check real edits.
+        if (-not $grid.IsCurrentCellInEditMode) { return }
         $name = $grid.Columns[$e.ColumnIndex].Name
         $problem = Get-FieldProblem $name ("$($e.FormattedValue)".Trim())
         if ($problem) {
@@ -418,60 +445,77 @@ function Show-Gui {
     })
     $grid.Add_CellEndEdit({
         param($s, $e)
-        $row = $grid.Rows[$e.RowIndex]
-        Save-Grid
-        $col = $grid.Columns[$e.ColumnIndex].Name
-        if (@('Address', 'User', 'Port', 'Interface') -contains $col -and (Get-RowDevice $row).Address) { Start-Row $row 'status' }
+        Invoke-Safe {
+            $row = $grid.Rows[$e.RowIndex]
+            Save-Grid
+            $col = $grid.Columns[$e.ColumnIndex].Name
+            if (@('Address', 'User', 'Port', 'Interface') -contains $col -and (Get-RowDevice $row).Address) { Start-Row $row 'status' }
+        }
     })
     $grid.Add_CellDoubleClick({
         param($s, $e)
-        if ($e.RowIndex -ge 0 -and $grid.Columns[$e.ColumnIndex].Name -eq 'Status') {
-            $t = $grid.Rows[$e.RowIndex].Tag.Details
-            if ($t) { [void][System.Windows.Forms.MessageBox]::Show($t, 'CAKE Switch - details') }
-        } elseif ($e.RowIndex -ge 0) {
-            [void]$grid.BeginEdit($true)
+        Invoke-Safe {
+            if ($e.RowIndex -lt 0 -or $e.ColumnIndex -lt 0) { return }
+            if ($grid.Columns[$e.ColumnIndex].Name -eq 'Status') {
+                $t = $grid.Rows[$e.RowIndex].Tag.Details
+                if ($t) { [void][System.Windows.Forms.MessageBox]::Show($t, 'CAKE Switch - details') }
+            } else {
+                [void]$grid.BeginEdit($true)
+            }
         }
     })
 
-    $buttons['On'].Add_Click({ Start-Selected 'on' })
-    $buttons['Off'].Add_Click({ Start-Selected 'off' })
-    $buttons['Toggle'].Add_Click({ Start-Selected 'toggle' })
+    $buttons['On'].Add_Click({ Invoke-Safe { Start-Selected 'on' } })
+    $buttons['Off'].Add_Click({ Invoke-Safe { Start-Selected 'off' } })
+    $buttons['Toggle'].Add_Click({ Invoke-Safe { Start-Selected 'toggle' } })
     $buttons['Refresh'].Add_Click({
-        if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
-        foreach ($r in $grid.Rows) { Start-Row $r 'status' }
+        Invoke-Safe {
+            if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
+            foreach ($r in $grid.Rows) { Start-Row $r 'status' }
+        }
     })
     $buttons['Add'].Add_Click({
-        $row = Add-DeviceRow (New-Device "Device $($grid.Rows.Count + 1)" '')
-        Save-Grid
-        $grid.ClearSelection()
-        $grid.CurrentCell = $row.Cells['Address']
-        [void]$grid.BeginEdit($true)
+        Invoke-Safe {
+            if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
+            $row = Add-DeviceRow (New-Device "Device $($grid.Rows.Count + 1)" '')
+            Save-Grid
+            $grid.ClearSelection()
+            $grid.CurrentCell = $row.Cells['Address']
+            [void]$grid.BeginEdit($true)
+        }
     })
     $buttons['Remove'].Add_Click({
-        $rows = @($grid.SelectedRows)
-        if ($rows.Count -eq 0) { return }
-        $names = ($rows | ForEach-Object { (Get-RowDevice $_).Name }) -join ', '
-        if ([System.Windows.Forms.MessageBox]::Show("Remove $names from the list?`n(Nothing is changed on the device.)", 'CAKE Switch', 'YesNo') -eq 'Yes') {
-            foreach ($r in $rows) { $grid.Rows.Remove($r) }
-            Save-Grid
+        Invoke-Safe {
+            if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
+            $rows = @($grid.SelectedRows)
+            if ($rows.Count -eq 0 -and $grid.CurrentRow) { $rows = @($grid.CurrentRow) }
+            if ($rows.Count -eq 0) { return }
+            $names = ($rows | ForEach-Object { (Get-RowDevice $_).Name }) -join ', '
+            if ([System.Windows.Forms.MessageBox]::Show("Remove $names from the list?`n(Nothing is changed on the device.)", 'CAKE Switch', 'YesNo') -eq 'Yes') {
+                foreach ($r in $rows) { $grid.Rows.Remove($r) }
+                Save-Grid
+            }
         }
     })
     $buttons['Key'].Add_Click({
-        $row = $grid.CurrentRow
-        if (-not $row) { return }
-        $d = Get-RowDevice $row
-        $problem = Get-DeviceProblem $d
-        if ($problem) { [void][System.Windows.Forms.MessageBox]::Show($problem, 'CAKE Switch'); return }
-        # Password prompts need a real console, so run the setup in its own window.
-        $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$PSCommandPath`"", '-Action', 'SetupKey',
-                    '-Router', $d.Address, '-User', $d.User, '-Port', $d.Port, '-ConfigFile', "`"$ConfigFile`"")
-        Start-Process powershell.exe -ArgumentList $psArgs
+        Invoke-Safe {
+            if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
+            $row = $grid.CurrentRow
+            if (-not $row) { [void][System.Windows.Forms.MessageBox]::Show('Select a device first.', 'CAKE Switch'); return }
+            $d = Get-RowDevice $row
+            $problem = Get-DeviceProblem $d
+            if ($problem) { [void][System.Windows.Forms.MessageBox]::Show($problem, 'CAKE Switch'); return }
+            # Password prompts need a real console, so run the setup in its own window.
+            $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-NoExit', '-File', "`"$ScriptPath`"", '-Action', 'SetupKey',
+                        '-Router', $d.Address, '-User', $d.User, '-Port', "$($d.Port)", '-ConfigFile', "`"$ConfigFile`"")
+            Start-Process powershell.exe -ArgumentList $psArgs
+        }
     })
 
     foreach ($d in $Config.Devices) { [void](Add-DeviceRow $d) }
     $form.Controls.AddRange(@($grid, $info))
-    $form.Add_Shown({ $grid.ClearSelection(); foreach ($r in $grid.Rows) { Start-Row $r 'status' } ; $timer.Start() })
-    $form.Add_FormClosing({ $timer.Stop(); if ($grid.IsCurrentCellInEditMode) { [void]$grid.EndEdit() } })
+    $form.Add_Shown({ Invoke-Safe { $grid.ClearSelection(); foreach ($r in $grid.Rows) { Start-Row $r 'status' } }; $timer.Start() })
+    $form.Add_FormClosing({ $timer.Stop(); if ($grid.IsCurrentCellInEditMode) { try { [void]$grid.EndEdit() } catch { } } })
     [void]$form.ShowDialog()
 }
 
@@ -491,7 +535,7 @@ function Get-TargetDevices {
 switch ($Action) {
     'Gui' { Show-Gui }
     'List' {
-        Get-TargetDevices | Format-Table Name, Address, User, Port, Interface -AutoSize | Out-String | Write-Output
+        Get-TargetDevices | Format-Table Name, Address, User, Port, Interface -AutoSize | Out-String -Width 200 | Write-Output
     }
     'SetupKey' {
         $targets = @(Get-TargetDevices)
