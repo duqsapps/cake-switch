@@ -37,11 +37,14 @@ param(
     # Only touch SQM queues bound to this interface (e.g. eth1, pppoe-wan, br-lan). Empty = all queues.
     [string]$Interface = '',
     [string]$KeyFile,
-    [string]$ConfigFile = (Join-Path $PSScriptRoot 'cake-switch.json')
+    # Default: cake-switch.json next to this script.
+    [string]$ConfigFile
 )
 
 $ErrorActionPreference = 'Stop'
 $ScriptPath = $PSCommandPath
+# Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
+if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'cake-switch.json' }
 $ConfigFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigFile)
 
 # --- configuration -----------------------------------------------------------------------------
@@ -237,7 +240,13 @@ function Complete-CakeJob($job) {
     }
     if ($p.ExitCode -ne 0 -and -not $result.Error) {
         if ($p.ExitCode -eq 255) {
-            $result.Error = "SSH to $($d.User)@$($d.Address) failed: $err  (key/password problem? use 'Setup SSH key')"
+            $hint = ''
+            if ($err -match 'Host key verification failed') {
+                $hint = "  (the device's host key changed: if that is expected, run: ssh-keygen -R $($d.Address))"
+            } elseif ($err -match 'Permission denied') {
+                $hint = "  (SSH key not installed on this device? use 'Setup SSH key')"
+            }
+            $result.Error = "SSH to $($d.User)@$($d.Address) failed: $err$hint"
         } else {
             $result.Error = "Command failed (exit $($p.ExitCode)). $err"
         }
