@@ -7,7 +7,8 @@
     "enabled" flag of its SQM queue(s) (sqm-scripts / luci-app-sqm), then restarts SQM so CAKE
     is actually removed from / added to the interface.
 
-    Devices are stored in cake-switch.json next to this script. Run without -Action to open the
+    Devices are stored in cake-switch.json next to this script, or, when installed with the setup
+    program, in %APPDATA%\CAKE Switch\cake-switch.json. Run without -Action to open the
     GUI, where devices can be added, removed and edited (name, IP address, user, port, interface)
     at any time.
 
@@ -39,7 +40,7 @@ param(
     # Only touch SQM queues bound to this interface (e.g. eth1, pppoe-wan, br-lan). Empty = all queues.
     [string]$Interface = '',
     [string]$KeyFile,
-    # Default: cake-switch.json next to this script.
+    # Default: cake-switch.json next to this script (installed: %APPDATA%\CAKE Switch\cake-switch.json).
     [string]$ConfigFile,
     # GUI only: start hidden, with just the tray icon (e.g. for a Startup-folder shortcut).
     [switch]$Tray
@@ -48,7 +49,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
-if (-not $ConfigFile) { $ConfigFile = Join-Path $PSScriptRoot 'cake-switch.json' }
+# The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
+# device list then lives in the user's profile.
+$DefaultConfigFile = if (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'CakeSwitch.installed')) {
+    Join-Path $env:APPDATA 'CAKE Switch\cake-switch.json'
+} else {
+    Join-Path $PSScriptRoot 'cake-switch.json'
+}
+if (-not $ConfigFile) { $ConfigFile = $DefaultConfigFile }
 $ConfigFile = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ConfigFile)
 
 # --- configuration -----------------------------------------------------------------------------
@@ -112,6 +120,8 @@ function Save-Config($cfg) {
             [ordered]@{ Name = "$($_.Name)"; Address = "$($_.Address)"; User = "$($_.User)"; Port = $p; Interface = "$($_.Interface)" }
         })
     }
+    $dir = Split-Path -Parent $ConfigFile
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     $data | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ConfigFile -Encoding UTF8
 }
 
@@ -311,8 +321,7 @@ function Get-AutostartCommand {
     # conhost --headless: no console window at logon (see CakeSwitch-GUI.cmd). Kept short because
     # Windows ignores Run entries longer than 260 characters.
     $cmd = "`"$env:SystemRoot\System32\conhost.exe`" --headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Action Gui -Tray"
-    $defaultConfig = Join-Path (Split-Path $ScriptPath) 'cake-switch.json'
-    if ($ConfigFile -ne $defaultConfig) { $cmd += " -ConfigFile `"$ConfigFile`"" }
+    if ($ConfigFile -ne $DefaultConfigFile) { $cmd += " -ConfigFile `"$ConfigFile`"" }
     return $cmd
 }
 
