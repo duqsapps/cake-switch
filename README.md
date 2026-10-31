@@ -4,6 +4,17 @@ Switch **SQM / CAKE** on and off on your OpenWrt router and access points from W
 
 It's a single PowerShell script. It uses the OpenSSH client built into Windows 10 and 11, so there's nothing to install on the PC. It works with the standard OpenWrt `sqm-scripts` / `luci-app-sqm` setup. It sets `enabled` on your SQM queue(s), commits the change and restarts SQM. CAKE is then removed from (or added back to) the interface, and the setting survives a router reboot.
 
+## Install
+
+Run **`CakeSwitch-Setup-<version>.exe`** and click through it (Windows asks for admin rights, because the app goes into `C:\Program Files\CAKE Switch`). You get a **CAKE Switch** entry in the Start menu, an optional desktop icon, and an uninstaller under *Settings > Apps*.
+
+- The installed app keeps its device list per user, in `%APPDATA%\CAKE Switch\cake-switch.json`. To keep a list you already have, copy your old `cake-switch.json` there.
+- The setup program isn't code-signed, so Windows SmartScreen may warn about an unknown publisher: click *More info > Run anyway*.
+- Uninstalling removes the app, its shortcuts and your "Start with Windows" entry. The device list in `%APPDATA%` is kept.
+- To build the setup program yourself: install NSIS 3 and run `makensis -DVERSION=1.0.0 installer\CakeSwitch.nsi` (also works on Linux).
+
+You can also run it without installing, straight from this folder, as described below.
+
 ## Files
 
 | File | Purpose |
