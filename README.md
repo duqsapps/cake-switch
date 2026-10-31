@@ -36,11 +36,13 @@ While the app runs, a dot in the notification area (next to the clock) shows the
 | Orange | Error, or SQM enabled but CAKE not active |
 | Grey | Checking or switching |
 
-- **Left-click** the dot to open the window. **Right-click** it for *Turn on / Turn off / Refresh* (for the main device), *Open window* and *Exit*.
+- **Left-click** the dot to open the window. **Right-click** it for *Turn on / Turn off / Refresh* (for the main device), *Start with Windows*, *Open window* and *Exit*.
 - Closing or minimising the window only hides it. The app keeps running in the tray until you choose **Exit**.
 - The main device is re-checked every minute, so the dot also follows changes made in LuCI.
 - To make a different device the main one, put it first in `cake-switch.json`.
-- **Start with Windows, tray only:** press Win+R, type `shell:startup`, and create a shortcut there to `"C:\path\to\cake-switch\CakeSwitch-GUI.cmd" -Tray`.
+- **Start with Windows:** tick *Start with Windows* in the window (or in the tray menu). CAKE Switch then starts minimized to the tray when you sign in. Untick it to stop. (It's stored as a "CAKE Switch" entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, and it also shows under *Settings > Apps > Startup*.)
+- Only one copy runs at a time: opening CAKE Switch again just brings the running window to the front.
+- `CakeSwitch-GUI.cmd -Tray` starts it minimized to the tray by hand.
 
 ## Setup (once)
 

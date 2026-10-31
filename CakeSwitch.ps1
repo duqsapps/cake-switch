@@ -302,23 +302,62 @@ function Install-SshKey($d) {
     Write-Host (Format-Status (Complete-CakeJob $job))
 }
 
+# --- start with Windows (HKCU Run key, starts hidden in the tray) -------------------------------
+
+$AutostartKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$AutostartName = 'CAKE Switch'
+
+function Get-AutostartCommand {
+    # conhost --headless: no console window at logon (see CakeSwitch-GUI.cmd). Kept short because
+    # Windows ignores Run entries longer than 260 characters.
+    $cmd = "`"$env:SystemRoot\System32\conhost.exe`" --headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -Action Gui -Tray"
+    $defaultConfig = Join-Path (Split-Path $ScriptPath) 'cake-switch.json'
+    if ($ConfigFile -ne $defaultConfig) { $cmd += " -ConfigFile `"$ConfigFile`"" }
+    return $cmd
+}
+
+function Test-Autostart {
+    try { return [bool](Get-ItemProperty -LiteralPath $AutostartKey -Name $AutostartName -ErrorAction Stop).$AutostartName } catch { return $false }
+}
+
+function Set-Autostart([bool]$Enable) {
+    if ($Enable) {
+        if (-not (Test-Path -LiteralPath $AutostartKey)) { New-Item -Path $AutostartKey -Force | Out-Null }
+        Set-ItemProperty -LiteralPath $AutostartKey -Name $AutostartName -Value (Get-AutostartCommand)
+    } elseif (Test-Autostart) {
+        Remove-ItemProperty -LiteralPath $AutostartKey -Name $AutostartName
+    }
+}
+
 # --- GUI ------------------------------------------------------------------------------------------
 
 function Show-Gui {
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
     [System.Windows.Forms.Application]::EnableVisualStyles()
 
+    # One instance per device list: a second launch (e.g. double-click while it already runs from
+    # autostart) just brings the running window to the front and exits.
+    $sha = [System.Security.Cryptography.SHA1]::Create()
+    $id = 'CakeSwitch-' + ([System.BitConverter]::ToString($sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($ConfigFile.ToLowerInvariant()))) -replace '-', '').Substring(0, 16)
+    $createdNew = $false
+    $mutex = [System.Threading.Mutex]::new($true, "Local\$id", [ref]$createdNew)
+    $showEvent = [System.Threading.EventWaitHandle]::new($false, [System.Threading.EventResetMode]::AutoReset, "Local\$id-show")
+    if (-not $createdNew) {
+        if (-not $Tray) { [void]$showEvent.Set() }
+        return
+    }
+
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'CAKE Switch'
-    $form.ClientSize = New-Object System.Drawing.Size(780, 360)
-    # Wide enough for the button row (it ends at x=656).
-    $form.MinimumSize = New-Object System.Drawing.Size(800, 300)
+    $form.ClientSize = New-Object System.Drawing.Size(830, 360)
+    # Wide enough for the button row and the "Start with Windows" box (about x=810).
+    $form.MinimumSize = New-Object System.Drawing.Size(850, 300)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
     $grid = New-Object System.Windows.Forms.DataGridView
     $grid.Location = New-Object System.Drawing.Point(12, 12)
-    $grid.Size = New-Object System.Drawing.Size(756, 250)
+    $grid.Size = New-Object System.Drawing.Size(806, 250)
     $grid.Anchor = 'Top, Bottom, Left, Right'
     $grid.AllowUserToAddRows = $false
     $grid.AllowUserToResizeRows = $false
@@ -340,7 +379,7 @@ function Show-Gui {
 
     $info = New-Object System.Windows.Forms.Label
     $info.Location = New-Object System.Drawing.Point(12, 268)
-    $info.Size = New-Object System.Drawing.Size(756, 34)
+    $info.Size = New-Object System.Drawing.Size(806, 34)
     $info.Anchor = 'Bottom, Left, Right'
     $info.ForeColor = [System.Drawing.Color]::DimGray
     $info.Text = 'Edit a cell (double-click or F2) to change a device''s name, IP address, user, port or SQM interface; changes are saved automatically. Interface empty = all SQM queues on that device. Select several rows to switch them together.'
@@ -360,6 +399,13 @@ function Show-Gui {
         if ($b[0] -eq 'Refresh') { $gap = 120 }
         $x += $gap
     }
+    $autoBox = New-Object System.Windows.Forms.CheckBox
+    $autoBox.Text = 'Start with Windows'
+    $autoBox.AutoSize = $true
+    $autoBox.Location = New-Object System.Drawing.Point(($x + 6), 320)
+    $autoBox.Anchor = 'Bottom, Left'
+    $form.Controls.Add($autoBox)
+    (New-Object System.Windows.Forms.ToolTip).SetToolTip($autoBox, 'Start CAKE Switch when you sign in to Windows, minimized to the tray.')
 
     # Event handlers run inside the WinForms message loop: an exception escaping one would show .NET's
     # "unhandled exception" dialog (or close the window), so every handler goes through this.
@@ -442,6 +488,7 @@ function Show-Gui {
             }
         }
         try { Update-Tray } catch { }
+        try { if ($showEvent.WaitOne(0)) { Show-Window } } catch { }
     })
 
     $grid.Add_CellValidating({
@@ -545,7 +592,7 @@ function Show-Gui {
     }
     # Mutable state shared by the handlers (assigning a plain variable inside a handler would only
     # create a local copy).
-    $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false }
+    $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false; Syncing = $false }
 
     $notify = New-Object System.Windows.Forms.NotifyIcon
     $notify.Icon = $icons.Unknown
@@ -590,7 +637,18 @@ function Show-Gui {
         $notify.Visible = $false
         $notify.Dispose()
         try { $form.Close() } catch { }
+        try { $mutex.ReleaseMutex() } catch { }
         $appContext.ExitThread()
+    }
+
+    # The "Start with Windows" checkbox and tray menu item both show and change the Run entry.
+    function Sync-Autostart {
+        $ui.Syncing = $true
+        try { $on = Test-Autostart; $autoBox.Checked = $on; $miAuto.Checked = $on } finally { $ui.Syncing = $false }
+    }
+    function Switch-Autostart([bool]$Enable) {
+        if ($ui.Syncing) { return }
+        try { Set-Autostart $Enable } finally { Sync-Autostart }
     }
 
     $menu = New-Object System.Windows.Forms.ContextMenuStrip
@@ -598,6 +656,8 @@ function Show-Gui {
     $miOff = $menu.Items.Add('Turn off')
     $miRefresh = $menu.Items.Add('Refresh')
     [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $miAuto = New-Object System.Windows.Forms.ToolStripMenuItem -ArgumentList 'Start with Windows'
+    [void]$menu.Items.Add($miAuto)
     $miOpen = $menu.Items.Add('Open window')
     $miExit = $menu.Items.Add('Exit')
     $menu.Add_Opening({
@@ -607,8 +667,11 @@ function Show-Gui {
             $miOn.Text = if ($name) { "Turn on ($name)" } else { 'Turn on' }
             $miOff.Text = if ($name) { "Turn off ($name)" } else { 'Turn off' }
             foreach ($mi in @($miOn, $miOff, $miRefresh)) { $mi.Enabled = [bool]$row }
+            Sync-Autostart
         }
     })
+    $miAuto.Add_Click({ Invoke-Safe { Switch-Autostart (-not $miAuto.Checked) } })
+    $autoBox.Add_CheckedChanged({ Invoke-Safe { Switch-Autostart $autoBox.Checked } })
     $miOn.Add_Click({ Invoke-Safe { Start-Main 'on' } })
     $miOff.Add_Click({ Invoke-Safe { Start-Main 'off' } })
     $miRefresh.Add_Click({ Invoke-Safe { Start-Main 'status' } })
@@ -652,6 +715,9 @@ function Show-Gui {
     })
     $form.Add_FormClosed({ try { Exit-App } catch { } })   # e.g. Windows shutting down
 
+    # Refresh the Run entry if autostart is on, in case the folder was moved since it was set.
+    try { if (Test-Autostart) { Set-Autostart $true } } catch { }
+    Sync-Autostart
     foreach ($r in $grid.Rows) { Start-Row $r 'status' }
     $timer.Start()
     $poll.Start()
