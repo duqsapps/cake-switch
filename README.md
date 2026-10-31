@@ -25,6 +25,23 @@ The window shows one row per OpenWrt device, with **Name, IP address, User, Port
 
 Each access point needs `luci-app-sqm` installed and an SQM queue configured on it, just like the router.
 
+## Tray icon
+
+While the app runs, a dot in the notification area (next to the clock) shows the state of the **first device in the list** (the main one, usually your router):
+
+| Dot | Meaning |
+|---|---|
+| Green | CAKE is ON |
+| Red | CAKE is OFF |
+| Orange | Error, or SQM enabled but CAKE not active |
+| Grey | Checking or switching |
+
+- **Left-click** the dot to open the window. **Right-click** it for *Toggle / Turn on / Turn off / Refresh* (for the main device), *Open window* and *Exit*.
+- Closing or minimising the window only hides it. The app keeps running in the tray until you choose **Exit**.
+- The main device is re-checked every minute, so the dot also follows changes made in LuCI.
+- To make a different device the main one, put it first in `cake-switch.json`.
+- **Start with Windows, tray only:** press Win+R, type `shell:startup`, and create a shortcut there to `"C:\path\to\cake-switch\CakeSwitch-GUI.cmd" -Tray`.
+
 ## Setup (once)
 
 1. **Configure SQM** on each device (Network → SQM QoS in LuCI) with queue discipline `cake`.

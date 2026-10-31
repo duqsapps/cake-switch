@@ -14,6 +14,8 @@
 .EXAMPLE
     .\CakeSwitch.ps1                                   # GUI
 .EXAMPLE
+    .\CakeSwitch.ps1 -Tray                             # GUI, starting hidden in the notification area
+.EXAMPLE
     .\CakeSwitch.ps1 -Action Status                    # status of all devices
 .EXAMPLE
     .\CakeSwitch.ps1 -Action Off -Device "Main router"
@@ -38,7 +40,9 @@ param(
     [string]$Interface = '',
     [string]$KeyFile,
     # Default: cake-switch.json next to this script.
-    [string]$ConfigFile
+    [string]$ConfigFile,
+    # GUI only: start hidden, with just the tray icon (e.g. for a Startup-folder shortcut).
+    [switch]$Tray
 )
 
 $ErrorActionPreference = 'Stop'
@@ -373,7 +377,8 @@ function Show-Gui {
     function Add-DeviceRow($d) {
         $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '')
         # Job = running ssh job; Next = action clicked while busy, started when the job finishes.
-        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = '' }
+        # State = last result (ON / OFF / Error / Enabled, not active), or Working while switching.
+        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = '' }
         return $grid.Rows[$i]
     }
 
@@ -396,10 +401,12 @@ function Show-Gui {
         $row.Tag.Details = $details
     }
 
-    function Start-Row($row, [string]$verb) {
-        if ($row.Tag.Job) { $row.Tag.Next = $verb; return }
+    function Start-Row($row, [string]$verb, [switch]$Quiet) {
+        if ($row.Tag.Job) { if (-not $Quiet) { $row.Tag.Next = $verb }; return }
         $d = Get-RowDevice $row
-        Set-RowStatus $row 'Working...' ([System.Drawing.Color]::Gray) ''
+        # Quiet = background status check: keep showing the last status instead of 'Working...'.
+        if (-not $Quiet) { Set-RowStatus $row 'Working...' ([System.Drawing.Color]::Gray) '' }
+        if ($verb -ne 'status') { $row.Tag.State = 'Working' }
         $row.Tag.Job = Start-CakeJob $d $verb
     }
 
@@ -429,6 +436,7 @@ function Show-Gui {
                     default { [System.Drawing.Color]::DarkOrange }
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
+                $row.Tag.State = $state
                 if ($row.Tag.Next) {
                     $verb = $row.Tag.Next
                     $row.Tag.Next = $null
@@ -436,9 +444,11 @@ function Show-Gui {
                 }
             } catch {
                 $row.Tag.Next = $null
+                $row.Tag.State = 'Error'
                 try { $row.Cells['Status'].Value = "Error: $($_.Exception.Message)" } catch { }
             }
         }
+        try { Update-Tray } catch { }
     })
 
     $grid.Add_CellValidating({
@@ -521,11 +531,148 @@ function Show-Gui {
         }
     })
 
+    # --- tray icon: shows the state of the first device in the list ("the main one") ---------------
+
+    function New-DotIcon([System.Drawing.Color]$Color) {
+        $bmp = New-Object System.Drawing.Bitmap -ArgumentList 32, 32
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.Clear([System.Drawing.Color]::Transparent)
+        $brush = New-Object System.Drawing.SolidBrush -ArgumentList $Color
+        $pen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 3
+        $g.FillEllipse($brush, 2, 2, 28, 28)
+        $g.DrawEllipse($pen, 2, 2, 28, 28)
+        $pen.Dispose(); $brush.Dispose(); $g.Dispose()
+        return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
+    }
+    $icons = @{
+        ON      = New-DotIcon ([System.Drawing.Color]::FromArgb(34, 160, 60))
+        OFF     = New-DotIcon ([System.Drawing.Color]::FromArgb(200, 40, 40))
+        Error   = New-DotIcon ([System.Drawing.Color]::FromArgb(240, 150, 0))
+        Unknown = New-DotIcon ([System.Drawing.Color]::Gray)
+    }
+    # Mutable state shared by the handlers (assigning a plain variable inside a handler would only
+    # create a local copy).
+    $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false }
+
+    $notify = New-Object System.Windows.Forms.NotifyIcon
+    $notify.Icon = $icons.Unknown
+    $notify.Text = 'CAKE Switch'
+
+    function Get-MainRow { if ($grid.Rows.Count -gt 0) { return $grid.Rows[0] } else { return $null } }
+
+    function Update-Tray {
+        $row = Get-MainRow
+        $name = ''; $state = ''
+        if ($row) { $name = "$($row.Cells['Name'].Value)".Trim(); $state = "$($row.Tag.State)" }
+        $key = switch ($state) { 'ON' { 'ON' } 'OFF' { 'OFF' } 'Error' { 'Error' } 'Enabled, not active' { 'Error' } default { 'Unknown' } }
+        $label = switch ($state) { 'ON' { 'CAKE is ON' } 'OFF' { 'CAKE is OFF' } 'Working' { 'switching...' } '' { 'checking...' } default { $state } }
+        $tip = if ($row) { "CAKE Switch - ${name}: $label" } else { 'CAKE Switch - no devices' }
+        if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }   # NotifyIcon.Text limit
+        if ($ui.TrayKey -eq "$key|$tip") { return }
+        $ui.TrayKey = "$key|$tip"
+        $notify.Icon = $icons[$key]
+        $notify.Text = $tip
+        $form.Icon = $icons[$key]
+    }
+
+    function Show-Window {
+        $form.Show()
+        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { $form.WindowState = 'Normal' }
+        $form.Activate()
+    }
+
+    function Start-Main([string]$verb) {
+        $row = Get-MainRow
+        if (-not $row) { return }
+        if ($grid.IsCurrentCellInEditMode -and -not $grid.EndEdit()) { return }
+        Start-Row $row $verb
+        Update-Tray
+    }
+
+    function Exit-App {
+        if ($ui.Done) { return }
+        $ui.Done = $true
+        $ui.Exiting = $true
+        $timer.Stop(); $poll.Stop()
+        $notify.Visible = $false
+        $notify.Dispose()
+        try { $form.Close() } catch { }
+        $appContext.ExitThread()
+    }
+
+    $menu = New-Object System.Windows.Forms.ContextMenuStrip
+    $miToggle = $menu.Items.Add('Toggle')
+    $miToggle.Font = New-Object System.Drawing.Font -ArgumentList $menu.Font, ([System.Drawing.FontStyle]::Bold)
+    $miOn = $menu.Items.Add('Turn on')
+    $miOff = $menu.Items.Add('Turn off')
+    $miRefresh = $menu.Items.Add('Refresh')
+    [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+    $miOpen = $menu.Items.Add('Open window')
+    $miExit = $menu.Items.Add('Exit')
+    $menu.Add_Opening({
+        Invoke-Safe {
+            $row = Get-MainRow
+            $name = if ($row) { "$($row.Cells['Name'].Value)".Trim() } else { '' }
+            $miToggle.Text = if ($name) { "Toggle CAKE on $name" } else { 'Toggle' }
+            $miOn.Text = if ($name) { "Turn on ($name)" } else { 'Turn on' }
+            $miOff.Text = if ($name) { "Turn off ($name)" } else { 'Turn off' }
+            foreach ($mi in @($miToggle, $miOn, $miOff, $miRefresh)) { $mi.Enabled = [bool]$row }
+        }
+    })
+    $miToggle.Add_Click({ Invoke-Safe { Start-Main 'toggle' } })
+    $miOn.Add_Click({ Invoke-Safe { Start-Main 'on' } })
+    $miOff.Add_Click({ Invoke-Safe { Start-Main 'off' } })
+    $miRefresh.Add_Click({ Invoke-Safe { Start-Main 'status' } })
+    $miOpen.Add_Click({ Invoke-Safe { Show-Window } })
+    $miExit.Add_Click({ Invoke-Safe { Exit-App } })
+    $notify.ContextMenuStrip = $menu
+    $notify.Add_MouseClick({
+        param($s, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Safe { Show-Window } }
+    })
+
+    # Keep the tray icon current when CAKE is switched elsewhere (LuCI, another PC): check the main
+    # device every minute, without showing 'Working...'.
+    $poll = New-Object System.Windows.Forms.Timer
+    $poll.Interval = 60000
+    $poll.Add_Tick({
+        try {
+            $row = Get-MainRow
+            if ($row -and (Get-RowDevice $row).Address) { Start-Row $row 'status' -Quiet }
+        } catch { }
+    })
+
     foreach ($d in $Config.Devices) { [void](Add-DeviceRow $d) }
     $form.Controls.AddRange(@($grid, $info))
-    $form.Add_Shown({ Invoke-Safe { $grid.ClearSelection(); foreach ($r in $grid.Rows) { Start-Row $r 'status' } }; $timer.Start() })
-    $form.Add_FormClosing({ $timer.Stop(); if ($grid.IsCurrentCellInEditMode) { try { [void]$grid.EndEdit() } catch { } } })
-    [void]$form.ShowDialog()
+    $form.Add_Shown({ try { $grid.ClearSelection() } catch { } })
+    # Minimising or closing the window only hides it; the app keeps running in the tray until Exit.
+    $form.Add_Resize({
+        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { $form.Hide() }
+    })
+    $form.Add_FormClosing({
+        param($s, $e)
+        if ($grid.IsCurrentCellInEditMode) { try { [void]$grid.EndEdit() } catch { } }
+        if (-not $ui.Exiting -and $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
+            $e.Cancel = $true
+            $form.Hide()
+            if (-not $ui.HintShown) {
+                $ui.HintShown = $true
+                $notify.ShowBalloonTip(4000, 'CAKE Switch', 'Still running in the notification area. Right-click the icon to switch CAKE or to exit.', [System.Windows.Forms.ToolTipIcon]::Info)
+            }
+        }
+    })
+    $form.Add_FormClosed({ try { Exit-App } catch { } })   # e.g. Windows shutting down
+
+    foreach ($r in $grid.Rows) { Start-Row $r 'status' }
+    $timer.Start()
+    $poll.Start()
+    Update-Tray
+    $notify.Visible = $true
+    # An ApplicationContext (instead of ShowDialog) lets the window be hidden without ending the app.
+    $appContext = New-Object System.Windows.Forms.ApplicationContext
+    if (-not $Tray) { Show-Window }
+    [System.Windows.Forms.Application]::Run($appContext)
 }
 
 # --- command line ---------------------------------------------------------------------------------
