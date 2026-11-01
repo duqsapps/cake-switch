@@ -94,7 +94,7 @@ function Get-DeviceProblem($d) {
 
 function Read-Config {
     # CheckInterval: seconds between background status checks in the GUI; 0 = only when it starts.
-    $cfg = [pscustomobject]@{ KeyFile = ''; CheckInterval = 30; Devices = @() }
+    $cfg = [pscustomobject]@{ KeyFile = ''; CheckInterval = 600; Devices = @() }
     if (Test-Path -LiteralPath $ConfigFile) {
         $json = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
         if ($json.KeyFile) { $cfg.KeyFile = $json.KeyFile }
@@ -118,7 +118,7 @@ function Read-Config {
 }
 
 function Save-Config($cfg) {
-    $ci = 30; [void][int]::TryParse("$($cfg.CheckInterval)", [ref]$ci)
+    $ci = 600; [void][int]::TryParse("$($cfg.CheckInterval)", [ref]$ci)
     $data = [ordered]@{
         KeyFile = "$($cfg.KeyFile)"
         CheckInterval = $ci
@@ -467,7 +467,7 @@ function Show-Gui {
 
     # How often to re-check in the background (each check is one SSH login, logged by the router).
     $intervalChoices = @(@(15, '15 seconds'), @(30, '30 seconds'), @(60, '1 minute'), @(300, '5 minutes'),
-                         @(900, '15 minutes'), @(3600, '1 hour'), @(0, 'Only at start'))
+                         @(600, '10 minutes'), @(900, '15 minutes'), @(3600, '1 hour'), @(0, 'Only at start'))
     $intervalLabel = New-Object System.Windows.Forms.Label
     $intervalLabel.Text = 'Check for changes:'
     $intervalLabel.AutoSize = $true
@@ -819,7 +819,7 @@ function Show-Gui {
         $poll.Stop()
         if ($Seconds -gt 0) { $poll.Interval = $Seconds * 1000; $poll.Start() }
     }
-    $sel = 1
+    $sel = 4   # 10 minutes
     for ($i = 0; $i -lt $intervalChoices.Count; $i++) { if ($intervalChoices[$i][0] -eq [int]$Config.CheckInterval) { $sel = $i } }
     $intervalBox.SelectedIndex = $sel
     $intervalBox.Add_SelectedIndexChanged({

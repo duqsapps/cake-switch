@@ -2,7 +2,7 @@
 
 ## 1.5.0 (2026-11-01)
 
-- New **Check for changes** setting in the window: every 15 seconds, 30 seconds, 1 minute, 5 minutes, 15 minutes, 1 hour, or only at start (default 30 seconds). Pointing at the tray icon, opening its menu or the window still checks right away.
+- New **Check for changes** setting in the window: every 15 seconds, 30 seconds, 1 minute, 5 minutes, 10 minutes, 15 minutes, 1 hour, or only at start (default 10 minutes). Pointing at the tray icon, opening its menu or the window still checks right away.
 
 ## 1.4.0 (2026-11-01)
 
