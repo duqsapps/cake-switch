@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.3.0'
+$AppVersion = '1.4.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -654,7 +654,7 @@ function Show-Gui {
     }
     # Mutable state shared by the handlers (assigning a plain variable inside a handler would only
     # create a local copy).
-    $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false; Syncing = $false }
+    $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false; Syncing = $false; LastCheck = [datetime]::MinValue }
 
     $notify = New-Object System.Windows.Forms.NotifyIcon
     $notify.Icon = $icons.Unknown
@@ -689,7 +689,18 @@ function Show-Gui {
         $form.Icon = $icons[$key]
     }
 
+    # Re-read the state in the background (no 'Working...'), e.g. after another PC switched CAKE.
+    # -All: every device (when the window is visible), otherwise only the main one.
+    function Update-Quietly([switch]$All) {
+        $rows = if ($All) { @($grid.Rows) } else { @(Get-MainRow) }
+        foreach ($row in $rows) {
+            if ($row -and (Get-RowDevice $row).Address) { Start-Row $row 'status' -Quiet }
+        }
+        $ui.LastCheck = Get-Date
+    }
+
     function Show-Window {
+        if (-not $form.Visible) { Update-Quietly -All }
         $form.Show()
         if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) { $form.WindowState = 'Normal' }
         $form.Activate()
@@ -769,16 +780,16 @@ function Show-Gui {
         if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Safe { Switch-MainByClick } }
     })
 
-    # Keep the tray icon current when CAKE is switched elsewhere (LuCI, another PC): check the main
-    # device every minute, without showing 'Working...'.
+    # Follow changes made elsewhere (another PC running CAKE Switch, LuCI): re-check every 15 s (all
+    # devices while the window is open, else the main one), and right away when the mouse moves over
+    # the tray icon or its menu opens, so the tooltip and menu aren't out of date.
     $poll = New-Object System.Windows.Forms.Timer
-    $poll.Interval = 60000
-    $poll.Add_Tick({
-        try {
-            $row = Get-MainRow
-            if ($row -and (Get-RowDevice $row).Address) { Start-Row $row 'status' -Quiet }
-        } catch { }
+    $poll.Interval = 15000
+    $poll.Add_Tick({ try { Update-Quietly -All:$form.Visible } catch { } })
+    $notify.Add_MouseMove({
+        try { if (((Get-Date) - $ui.LastCheck).TotalSeconds -ge 3) { Update-Quietly } } catch { }
     })
+    $menu.Add_Opening({ try { Update-Quietly } catch { } })
 
     foreach ($d in $Config.Devices) { [void](Add-DeviceRow $d) }
     $form.Controls.AddRange(@($grid, $info))

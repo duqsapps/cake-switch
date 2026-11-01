@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.0 (2026-11-01)
+
+- Follows changes made from other PCs (or LuCI) much sooner: the state is re-checked every 15 seconds instead of every minute, right away when you point at the tray icon or open its menu or the window, and for all devices while the window is open.
+
 ## 1.3.0 (2026-11-01)
 
 - Shows the CAKE speed limits (from the SQM settings) when CAKE is on: in the tray tooltip, the Status column and the command line, e.g. "down 200 / up 50 Mbit".
