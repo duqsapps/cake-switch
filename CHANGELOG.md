@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1 (2026-11-01)
+
+- Updating keeps your "Start with Windows" setting: the installer's option is only ticked by default on a fresh install.
+
 ## 1.2.0 (2026-11-01)
 
 - New colours: blue = ON, grey = OFF; a hollow grey ring while checking or switching.
