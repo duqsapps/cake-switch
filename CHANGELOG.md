@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0 (2026-11-01)
+
+- New **Check for changes** setting in the window: every 15 seconds, 30 seconds, 1 minute, 5 minutes, 15 minutes, 1 hour, or only at start (default 30 seconds). Pointing at the tray icon, opening its menu or the window still checks right away.
+
 ## 1.4.0 (2026-11-01)
 
 - Follows changes made from other PCs (or LuCI) much sooner: the state is re-checked every 15 seconds instead of every minute, right away when you point at the tray icon or open its menu or the window, and for all devices while the window is open.

@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.4.0'
+$AppVersion = '1.5.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -93,10 +93,13 @@ function Get-DeviceProblem($d) {
 }
 
 function Read-Config {
-    $cfg = [pscustomobject]@{ KeyFile = ''; Devices = @() }
+    # CheckInterval: seconds between background status checks in the GUI; 0 = only when it starts.
+    $cfg = [pscustomobject]@{ KeyFile = ''; CheckInterval = 30; Devices = @() }
     if (Test-Path -LiteralPath $ConfigFile) {
         $json = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
         if ($json.KeyFile) { $cfg.KeyFile = $json.KeyFile }
+        $ci = 0
+        if ($null -ne $json.CheckInterval -and [int]::TryParse("$($json.CheckInterval)", [ref]$ci) -and $ci -ge 0) { $cfg.CheckInterval = $ci }
         if ($json.Devices) {
             $cfg.Devices = @($json.Devices | ForEach-Object {
                 $u = if ($_.User) { $_.User } else { 'root' }
@@ -115,8 +118,10 @@ function Read-Config {
 }
 
 function Save-Config($cfg) {
+    $ci = 30; [void][int]::TryParse("$($cfg.CheckInterval)", [ref]$ci)
     $data = [ordered]@{
         KeyFile = "$($cfg.KeyFile)"
+        CheckInterval = $ci
         Devices = @($cfg.Devices | ForEach-Object {
             $p = 22; [void][int]::TryParse("$($_.Port)", [ref]$p)
             [ordered]@{ Name = "$($_.Name)"; Address = "$($_.Address)"; User = "$($_.User)"; Port = $p; Interface = "$($_.Interface)" }
@@ -402,9 +407,9 @@ function Show-Gui {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CAKE Switch $AppVersion"
-    $form.ClientSize = New-Object System.Drawing.Size(830, 360)
+    $form.ClientSize = New-Object System.Drawing.Size(830, 392)
     # Wide enough for the button row and the "Start with Windows" box (about x=810).
-    $form.MinimumSize = New-Object System.Drawing.Size(850, 300)
+    $form.MinimumSize = New-Object System.Drawing.Size(850, 330)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -459,6 +464,30 @@ function Show-Gui {
     $autoBox.Anchor = 'Bottom, Left'
     $form.Controls.Add($autoBox)
     (New-Object System.Windows.Forms.ToolTip).SetToolTip($autoBox, 'Start CAKE Switch when you sign in to Windows, minimized to the tray.')
+
+    # How often to re-check in the background (each check is one SSH login, logged by the router).
+    $intervalChoices = @(@(15, '15 seconds'), @(30, '30 seconds'), @(60, '1 minute'), @(300, '5 minutes'),
+                         @(900, '15 minutes'), @(3600, '1 hour'), @(0, 'Only at start'))
+    $intervalLabel = New-Object System.Windows.Forms.Label
+    $intervalLabel.Text = 'Check for changes:'
+    $intervalLabel.AutoSize = $true
+    $intervalLabel.Location = New-Object System.Drawing.Point(12, 362)
+    $intervalLabel.Anchor = 'Bottom, Left'
+    $form.Controls.Add($intervalLabel)
+    $intervalBox = New-Object System.Windows.Forms.ComboBox
+    $intervalBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
+    $intervalBox.Location = New-Object System.Drawing.Point(130, 358)
+    $intervalBox.Size = New-Object System.Drawing.Size(120, 24)
+    $intervalBox.Anchor = 'Bottom, Left'
+    foreach ($c in $intervalChoices) { [void]$intervalBox.Items.Add($c[1]) }
+    $form.Controls.Add($intervalBox)
+    $intervalNote = New-Object System.Windows.Forms.Label
+    $intervalNote.Text = 'Pointing at the tray icon (or opening its menu or this window) always checks right away.'
+    $intervalNote.AutoSize = $true
+    $intervalNote.ForeColor = [System.Drawing.Color]::DimGray
+    $intervalNote.Location = New-Object System.Drawing.Point(262, 362)
+    $intervalNote.Anchor = 'Bottom, Left'
+    $form.Controls.Add($intervalNote)
 
     # Event handlers run inside the WinForms message loop: an exception escaping one would show .NET's
     # "unhandled exception" dialog (or close the window), so every handler goes through this.
@@ -780,12 +809,28 @@ function Show-Gui {
         if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Safe { Switch-MainByClick } }
     })
 
-    # Follow changes made elsewhere (another PC running CAKE Switch, LuCI): re-check every 15 s (all
-    # devices while the window is open, else the main one), and right away when the mouse moves over
-    # the tray icon or its menu opens, so the tooltip and menu aren't out of date.
+    # Follow changes made elsewhere (another PC running CAKE Switch, LuCI): re-check every
+    # CheckInterval seconds (all devices while the window is open, else the main one; 0 = never in the
+    # background), and right away when the mouse moves over the tray icon or its menu opens, so the
+    # tooltip and menu aren't out of date.
     $poll = New-Object System.Windows.Forms.Timer
-    $poll.Interval = 15000
     $poll.Add_Tick({ try { Update-Quietly -All:$form.Visible } catch { } })
+    function Set-CheckInterval([int]$Seconds) {
+        $poll.Stop()
+        if ($Seconds -gt 0) { $poll.Interval = $Seconds * 1000; $poll.Start() }
+    }
+    $sel = 1
+    for ($i = 0; $i -lt $intervalChoices.Count; $i++) { if ($intervalChoices[$i][0] -eq [int]$Config.CheckInterval) { $sel = $i } }
+    $intervalBox.SelectedIndex = $sel
+    $intervalBox.Add_SelectedIndexChanged({
+        Invoke-Safe {
+            $sec = $intervalChoices[$intervalBox.SelectedIndex][0]
+            if ([int]$Config.CheckInterval -eq $sec) { return }
+            $Config.CheckInterval = $sec
+            Save-Config $Config
+            Set-CheckInterval $sec
+        }
+    })
     $notify.Add_MouseMove({
         try { if (((Get-Date) - $ui.LastCheck).TotalSeconds -ge 3) { Update-Quietly } } catch { }
     })
@@ -825,7 +870,7 @@ function Show-Gui {
     Sync-Autostart
     foreach ($r in $grid.Rows) { Start-Row $r 'status' }
     $timer.Start()
-    $poll.Start()
+    Set-CheckInterval ([int]$Config.CheckInterval)
     Update-Tray
     $notify.Visible = $true
     # An ApplicationContext (instead of ShowDialog) lets the window be hidden without ending the app.
