@@ -1,8 +1,38 @@
 # CAKE Switch
 
-Switch **SQM / CAKE** on and off on your OpenWrt router and access points from Windows, with one click or one command.
+**Turn SQM / CAKE on and off on your OpenWrt router and access points from the Windows tray, with one click.**
 
-It's a single PowerShell script. It uses the OpenSSH client built into Windows 10 and 11, so there's nothing to install on the PC. It works with the standard OpenWrt `sqm-scripts` / `luci-app-sqm` setup. It sets `enabled` on your SQM queue(s), commits the change and restarts SQM. CAKE is then removed from (or added back to) the interface, and the setting survives a router reboot.
+[![Latest release](https://img.shields.io/github/v/release/dux1976/cake-switch)](../../releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
+
+<!--
+  Screenshot / GIF goes here. Save it as docs/screenshot.png (or docs/demo.gif)
+  and replace this comment with:
+  ![CAKE Switch: device list and tray icon](docs/screenshot.png)
+-->
+
+CAKE is great against bufferbloat, but its bandwidth limit also caps your speed. Sometimes you want it off for a moment: a speed test, a big download, or checking whether SQM is the cause of a problem. Doing that in LuCI means logging in, finding the SQM page, unticking a box and saving, on every device. CAKE Switch does it in one click from the tray, and the dot next to the clock always shows whether CAKE is really active.
+
+It's a single PowerShell script. It uses the OpenSSH client built into Windows 10 and 11, so there's nothing extra to install on the PC and nothing to install on the router beyond the standard OpenWrt `sqm-scripts` / `luci-app-sqm` setup. It sets `enabled` on your SQM queue(s), commits the change and restarts SQM. CAKE is then removed from (or added back to) the interface, and the setting survives a router reboot.
+
+## Features
+
+- **One-click tray toggle**: a dot next to the clock shows whether CAKE is on (blue), off (grey) or has a problem (orange). Left-click it to switch.
+- **Shows your CAKE limits**: hover the dot to see the download / upload limits from your SQM settings.
+- **Router and access points**: manage several OpenWrt devices in one list and switch one, some or all of them. Devices are contacted in parallel, so an offline AP doesn't hold up the rest.
+- **Checks the real state**: "ON" means a `cake` qdisc is actually active (read back with `tc`), not just that the setting is ticked. It re-checks every minute, so it also follows changes made in LuCI.
+- **Per-interface control**: switch every SQM queue on a device, or just one (e.g. `pppoe-wan`).
+- **One-click SSH key setup**: enter each device's root password once, and switching works without a password after that.
+- **Command line too**: `On`, `Off` and `Status` for scripts, desktop shortcuts, hotkeys and Task Scheduler.
+- **Nothing to install on the router**: it only uses `uci` and the SQM init script that OpenWrt already has.
+- **Small Windows installer** with Start menu entry, uninstaller and an optional *Start with Windows* (in the tray). Or run it straight from the folder without installing.
+
+## Requirements
+
+- Windows 10 or 11 (with the built-in OpenSSH client, which is on by default).
+- OpenWrt with `sqm-scripts` / `luci-app-sqm` and an SQM queue using the `cake` queue discipline.
+- SSH access to the router (and APs) as root.
 
 ## Install
 
