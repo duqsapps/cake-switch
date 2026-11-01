@@ -92,10 +92,13 @@ Section "${APPNAME}" SecApp
   WriteRegDWORD HKLM "${UNINSTKEY}" "NoRepair" 1
   WriteRegDWORD HKLM "${UNINSTKEY}" "EstimatedSize" 100
 
-  ; If "Start with Windows" was set from an older copy (e.g. a download folder), point it here.
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}"
-  StrCmp $0 "" +2
-    WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}" '"${LAUNCHER}" ${LAUNCHARGS} -Tray'
+  ; "Start with Windows" is set (again) by the section below only if it's ticked.
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}"
+SectionEnd
+
+Section "Start with Windows (in the tray)" SecAutostart
+  ; Same entry as the app's "Start with Windows" checkbox, which can turn it off again.
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}" '"${LAUNCHER}" ${LAUNCHARGS} -Tray'
 SectionEnd
 
 Section /o "Desktop shortcut" SecDesktop
@@ -106,6 +109,7 @@ SectionEnd
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The app, a Start menu entry and the uninstaller."
   !insertmacro MUI_DESCRIPTION_TEXT ${SecDesktop} "An icon on the desktop."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecAutostart} "Start CAKE Switch minimized to the tray when you sign in to Windows."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
