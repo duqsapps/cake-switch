@@ -713,7 +713,7 @@ function Show-Gui {
         if ($row) { $name = "$($row.Cells['Name'].Value)".Trim(); $state = "$($row.Tag.State)" }
         $key = switch ($state) { 'ON' { 'ON' } 'OFF' { 'OFF' } 'Error' { 'Error' } 'Enabled, not active' { 'Error' } default { 'Unknown' } }
         # Runs every 200 ms (status timer), so the "?" appears on time without a timer of its own.
-        if ($key -ne 'Unknown' -and ((Get-Date) - $row.Tag.CheckedAt).TotalSeconds -ge $StaleSeconds) { $key = "$key?" }
+        if ($key -ne 'Unknown' -and ((Get-Date) - $row.Tag.CheckedAt).TotalSeconds -ge $StaleSeconds) { $key = $key + '?' }
         # Several lines; NotifyIcon.Text allows at most 63 characters in total.
         $tip = if (-not $row) { 'CAKE Switch - no devices' } else {
             switch ($state) {
