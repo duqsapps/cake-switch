@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0 (2026-11-01)
+
+- Shows the CAKE speed limits (from the SQM settings) when CAKE is on: in the tray tooltip, the Status column and the command line, e.g. "down 200 / up 50 Mbit".
+- Clearer error when a device can't be reached: shows ssh's own message instead of "pipe has been ended".
+
 ## 1.2.1 (2026-11-01)
 
 - Updating keeps your "Start with Windows" setting: the installer's option is only ticked by default on a fresh install.

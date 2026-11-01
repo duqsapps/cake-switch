@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.2.1'
+$AppVersion = '1.3.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -147,7 +147,7 @@ function Get-SshArgs($d) {
 
 # --- the shell script that runs on the device --------------------------------------------------
 # Prints machine-readable lines:
-#   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1>
+#   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1> <download kbit/s> <upload kbit/s>
 #         (active = a cake qdisc is installed on the interface or its ifb4<interface>; empty fields are '-')
 #   ERROR <message>
 
@@ -180,7 +180,7 @@ for s in $secs; do
             tc qdisc show dev "$dev" 2>/dev/null | grep -q '^qdisc cake ' && a=1
         done
     fi
-    echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a"
+    echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a $(uci -q get sqm.$s.download || echo 0) $(uci -q get sqm.$s.upload || echo 0)"
 done
 '@
 
@@ -209,8 +209,13 @@ function Start-CakeJob($d, [ValidateSet('on', 'off', 'status')][string]$Verb) {
         # The leading newline keeps a UTF-8 BOM, which .NET Framework writes to stdin when the console
         # code page is 65001, on a line of its own instead of corrupting "ACTION=...".
         $script = "`nACTION=$Verb`nIFACE=$($d.Interface)`n" + $RemoteScript
-        $job.Process.StandardInput.Write($script.Replace("`r`n", "`n"))
-        $job.Process.StandardInput.Close()
+        # If ssh fails at once (host down, key refused) it exits before reading its input, and the write
+        # fails with "broken pipe" / "pipe has been ended". Ignore that: the exit code and ssh's own
+        # error message, reported by Complete-CakeJob, say what really went wrong.
+        try {
+            $job.Process.StandardInput.Write($script.Replace("`r`n", "`n"))
+            $job.Process.StandardInput.Close()
+        } catch { }
     } catch {
         $job.Error = $_.Exception.Message
     }
@@ -239,7 +244,11 @@ function Complete-CakeJob($job) {
         $f = $line.Trim() -split '\s+'
         switch ($f[0]) {
             'QUEUE' {
-                $q = [pscustomobject]@{ Section = $f[1]; Interface = $f[2]; Enabled = ($f[3] -eq '1'); Qdisc = $f[4]; Active = ($f[5] -eq '1') }
+                $down = 0; $up = 0
+                if ($f.Count -gt 6) { [void][int]::TryParse($f[6], [ref]$down) }
+                if ($f.Count -gt 7) { [void][int]::TryParse($f[7], [ref]$up) }
+                $q = [pscustomobject]@{ Section = $f[1]; Interface = $f[2]; Enabled = ($f[3] -eq '1'); Qdisc = $f[4]; Active = ($f[5] -eq '1')
+                                        Download = $down; Upload = $up }
                 $result.Queues += $q
                 if ($q.Enabled) { $result.Enabled = $true }
                 if ($q.Active) { $result.Active = $true }
@@ -270,14 +279,39 @@ function Get-StateText($r) {
     return 'OFF'
 }
 
+# SQM's download/upload limits are in kbit/s; 0 means that direction isn't shaped.
+function Format-Rate([int]$Kbit, [switch]$NoUnit) {
+    if ($Kbit -le 0) { return 'unlimited' }
+    if ($Kbit -ge 1000) { $n = ($Kbit / 1000).ToString('0.#', [System.Globalization.CultureInfo]::InvariantCulture); $u = 'Mbit' }
+    else { $n = "$Kbit"; $u = 'kbit' }
+    if ($NoUnit) { return $n } else { return "$n $u" }
+}
+
+# "down 200 / up 50 Mbit" for the queues where CAKE is active (several queues: one per interface).
+function Get-LimitText($r) {
+    $active = @($r.Queues | Where-Object { $_.Active })
+    $parts = foreach ($q in $active) {
+        $sameUnit = ($q.Download -ge 1000) -eq ($q.Upload -ge 1000) -and $q.Download -gt 0 -and $q.Upload -gt 0
+        $t = if ($sameUnit) {
+            "down $(Format-Rate $q.Download -NoUnit) / up $(Format-Rate $q.Upload)"
+        } else {
+            "down $(Format-Rate $q.Download) / up $(Format-Rate $q.Upload)"
+        }
+        if ($active.Count -gt 1) { "$($q.Interface): $t" } else { $t }
+    }
+    return (@($parts) -join '; ')
+}
+
 function Format-Status($r) {
-    $lines = @("$($r.Device.Name) [$($r.Device.Address)]: $(Get-StateText $r)")
+    $head = "$($r.Device.Name) [$($r.Device.Address)]: $(Get-StateText $r)"
+    if ($r.Active -and -not $r.Error) { $limits = Get-LimitText $r; if ($limits) { $head += " ($limits)" } }
+    $lines = @($head)
     if ($r.Error) { $lines += "  $($r.Error)" }
     if ($r.Enabled -and -not $r.Active -and -not $r.Error) {
         $lines += '  (qdisc may not be cake, or SQM failed to start - check: logread | grep SQM)'
     }
     foreach ($q in $r.Queues) {
-        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active
+        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4} down={5} up={6}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active, (Format-Rate $q.Download), (Format-Rate $q.Upload)
     }
     return $lines -join "`r`n"
 }
@@ -436,7 +470,7 @@ function Show-Gui {
         $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '')
         # Job = running ssh job; Next = action clicked while busy, started when the job finishes.
         # State = last result (ON / OFF / Error / Enabled, not active), or Working while switching.
-        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = '' }
+        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = '' }
         return $grid.Rows[$i]
     }
 
@@ -487,7 +521,9 @@ function Show-Gui {
             try {
                 try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @() } }
                 $state = Get-StateText $r
-                $text = if ($r.Error) { "Error: $($r.Error)" } elseif ($state -eq 'ON') { 'CAKE is ON' } elseif ($state -eq 'OFF') { 'CAKE is OFF' } else { $state }
+                $limits = if ($state -eq 'ON') { Get-LimitText $r } else { '' }
+                $row.Tag.Limits = $limits
+                $text = if ($r.Error) { "Error: $($r.Error)" } elseif ($state -eq 'ON') { if ($limits) { "CAKE is ON ($limits)" } else { 'CAKE is ON' } } elseif ($state -eq 'OFF') { 'CAKE is OFF' } else { $state }
                 $color = switch ($state) {
                     'ON' { $StateColors.ON }
                     'OFF' { $StateColors.OFF }
@@ -631,9 +667,21 @@ function Show-Gui {
         $name = ''; $state = ''
         if ($row) { $name = "$($row.Cells['Name'].Value)".Trim(); $state = "$($row.Tag.State)" }
         $key = switch ($state) { 'ON' { 'ON' } 'OFF' { 'OFF' } 'Error' { 'Error' } 'Enabled, not active' { 'Error' } default { 'Unknown' } }
-        $label = switch ($state) { 'ON' { 'CAKE ON (click: off)' } 'OFF' { 'CAKE OFF (click: on)' } 'Working' { 'switching...' } '' { 'checking...' } default { $state } }
-        $tip = if ($row) { "CAKE Switch - ${name}: $label" } else { 'CAKE Switch - no devices' }
-        if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }   # NotifyIcon.Text limit
+        # Several lines; NotifyIcon.Text allows at most 63 characters in total.
+        $tip = if (-not $row) { 'CAKE Switch - no devices' } else {
+            switch ($state) {
+                'ON' {
+                    $lim = "$($row.Tag.Limits)"
+                    if ($lim) { "${name}: CAKE ON`n$lim`nClick to turn off" } else { "${name}: CAKE ON`nClick to turn off" }
+                }
+                'OFF' { "${name}: CAKE OFF`nClick to turn on" }
+                'Working' { "${name}: switching..." }
+                '' { "${name}: checking..." }
+                default { "${name}: $state`nClick to open the window" }
+            }
+        }
+        if ($tip.Length -gt 63) { $tip = ($tip -replace "`nClick to turn (on|off)", '') }
+        if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }
         if ($ui.TrayKey -eq "$key|$tip") { return }
         $ui.TrayKey = "$key|$tip"
         $notify.Icon = $icons[$key]
