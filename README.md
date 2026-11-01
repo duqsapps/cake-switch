@@ -42,12 +42,12 @@ While the app runs, a dot in the notification area (next to the clock) shows the
 
 | Dot | Meaning |
 |---|---|
-| Green | CAKE is ON |
-| Red | CAKE is OFF |
+| Blue | CAKE is ON |
+| Grey | CAKE is OFF |
 | Orange | Error, or SQM enabled but CAKE not active |
-| Grey | Checking or switching |
+| Grey ring (hollow) | Checking or switching |
 
-- **Left-click** the dot to switch CAKE on the main device: green turns OFF, red turns ON (it goes grey while switching). If the state is unknown or an error, the click opens the window instead. **Right-click** it for *Turn on / Turn off / Refresh* (for the main device), *Start with Windows*, *Open window* and *Exit*.
+- **Left-click** the dot to switch CAKE on the main device: blue turns it OFF, grey turns it ON (it shows a hollow ring while switching). If the state is unknown or an error, the click opens the window instead. **Right-click** it for *Turn on / Turn off / Refresh* (for the main device), *Start with Windows*, *Open window* and *Exit*.
 - Closing or minimising the window only hides it. The app keeps running in the tray until you choose **Exit**.
 - The main device is re-checked every minute, so the dot also follows changes made in LuCI.
 - To make a different device the main one, put it first in `cake-switch.json`.

@@ -358,6 +358,14 @@ function Show-Gui {
         return
     }
 
+    # Colours for the tray dot and the Status column: blue = ON, grey = OFF, orange = error.
+    $StateColors = @{
+        ON    = [System.Drawing.Color]::FromArgb(0, 120, 215)
+        OFF   = [System.Drawing.Color]::FromArgb(128, 128, 128)
+        Error = [System.Drawing.Color]::FromArgb(240, 150, 0)
+        Busy  = [System.Drawing.Color]::FromArgb(160, 160, 160)
+    }
+
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CAKE Switch $AppVersion"
     $form.ClientSize = New-Object System.Drawing.Size(830, 360)
@@ -455,7 +463,7 @@ function Show-Gui {
         if ($row.Tag.Job) { if (-not $Quiet) { $row.Tag.Next = $verb }; return }
         $d = Get-RowDevice $row
         # Quiet = background status check: keep showing the last status instead of 'Working...'.
-        if (-not $Quiet) { Set-RowStatus $row 'Working...' ([System.Drawing.Color]::Gray) '' }
+        if (-not $Quiet) { Set-RowStatus $row 'Working...' $StateColors.Busy '' }
         if ($verb -ne 'status') { $row.Tag.State = 'Working' }
         $row.Tag.Job = Start-CakeJob $d $verb
     }
@@ -481,9 +489,9 @@ function Show-Gui {
                 $state = Get-StateText $r
                 $text = if ($r.Error) { "Error: $($r.Error)" } elseif ($state -eq 'ON') { 'CAKE is ON' } elseif ($state -eq 'OFF') { 'CAKE is OFF' } else { $state }
                 $color = switch ($state) {
-                    'ON' { [System.Drawing.Color]::ForestGreen }
-                    'OFF' { [System.Drawing.Color]::Firebrick }
-                    default { [System.Drawing.Color]::DarkOrange }
+                    'ON' { $StateColors.ON }
+                    'OFF' { $StateColors.OFF }
+                    default { $StateColors.Error }
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
                 $row.Tag.State = $state
@@ -583,23 +591,30 @@ function Show-Gui {
 
     # --- tray icon: shows the state of the first device in the list ("the main one") ---------------
 
-    function New-DotIcon([System.Drawing.Color]$Color) {
+    # Hollow = only a ring (used for "checking/switching", so it can't be mistaken for OFF's grey dot).
+    function New-DotIcon([System.Drawing.Color]$Color, [switch]$Hollow) {
         $bmp = New-Object System.Drawing.Bitmap -ArgumentList 32, 32
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.Clear([System.Drawing.Color]::Transparent)
         $brush = New-Object System.Drawing.SolidBrush -ArgumentList $Color
         $pen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 3
-        $g.FillEllipse($brush, 2, 2, 28, 28)
-        $g.DrawEllipse($pen, 2, 2, 28, 28)
+        if ($Hollow) {
+            $ring = New-Object System.Drawing.Pen -ArgumentList $Color, 6
+            $g.DrawEllipse($ring, 5, 5, 22, 22)
+            $ring.Dispose()
+        } else {
+            $g.FillEllipse($brush, 2, 2, 28, 28)
+            $g.DrawEllipse($pen, 2, 2, 28, 28)
+        }
         $pen.Dispose(); $brush.Dispose(); $g.Dispose()
         return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
     }
     $icons = @{
-        ON      = New-DotIcon ([System.Drawing.Color]::FromArgb(34, 160, 60))
-        OFF     = New-DotIcon ([System.Drawing.Color]::FromArgb(200, 40, 40))
-        Error   = New-DotIcon ([System.Drawing.Color]::FromArgb(240, 150, 0))
-        Unknown = New-DotIcon ([System.Drawing.Color]::Gray)
+        ON      = New-DotIcon $StateColors.ON
+        OFF     = New-DotIcon $StateColors.OFF
+        Error   = New-DotIcon $StateColors.Error
+        Unknown = New-DotIcon $StateColors.Busy -Hollow
     }
     # Mutable state shared by the handlers (assigning a plain variable inside a handler would only
     # create a local copy).
