@@ -6,7 +6,7 @@ It's a single PowerShell script. It uses the OpenSSH client built into Windows 1
 
 ## Install
 
-Download **`CakeSwitch-Setup-<version>.exe`** from the [Releases](../../releases) page, run it and click through it (Windows asks for admin rights, because the app goes into `C:\Program Files\CAKE Switch`). You get a **CAKE Switch** entry in the Start menu, an optional desktop icon, and an uninstaller under *Settings > Apps*.
+Download **`CakeSwitch-Setup-<version>.exe`** from the [Releases](../../releases) page, run it and click through it (Windows asks for admin rights, because the app goes into `C:\Program Files\CAKE Switch`). You get a **CAKE Switch** entry in the Start menu, an optional desktop icon, an uninstaller under *Settings > Apps*, and (ticked by default) *Start with Windows*, which starts the app in the tray when you sign in.
 
 - The installed app keeps its device list per user, in `%APPDATA%\CAKE Switch\cake-switch.json`. To keep a list you already have, copy your old `cake-switch.json` there.
 - The setup program isn't code-signed, so Windows SmartScreen may warn about an unknown publisher: click *More info > Run anyway*.

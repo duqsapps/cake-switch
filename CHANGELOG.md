@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0 (2026-11-01)
+
+- New colours: blue = ON, grey = OFF; a hollow grey ring while checking or switching.
+- The installer has a "Start with Windows (in the tray)" option, ticked by default. Before, autostart was only off until you ticked it in the app.
+
 ## 1.1.0 (2026-11-01)
 
 - Left-click the tray icon to switch CAKE on the main device (green: turn off, red: turn on). Open the window from the right-click menu.
