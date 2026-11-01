@@ -3,6 +3,7 @@
 ## 1.6.0 (2026-11-01)
 
 - The tray dot shows a white "?" when the main device's state hasn't been checked in the last 15 seconds, so you can tell a fresh state from an old one. Pointing at the dot checks again and the "?" goes away.
+- **Check for changes** now defaults to *Only at start*. If you already picked an interval, it's kept.
 
 ## 1.5.0 (2026-11-01)
 
