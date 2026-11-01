@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.1 (2026-11-01)
+
+- The tray dot no longer has a white border.
+
 ## 1.6.0 (2026-11-01)
 
 - The tray dot shows a white "?" when the main device's state hasn't been checked in the last 15 seconds, so you can tell a fresh state from an old one. Pointing at the dot checks again and the "?" goes away.

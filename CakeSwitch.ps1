@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.6.0'
+$AppVersion = '1.6.1'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -665,14 +665,12 @@ function Show-Gui {
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $g.Clear([System.Drawing.Color]::Transparent)
         $brush = New-Object System.Drawing.SolidBrush -ArgumentList $Color
-        $pen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 3
         if ($Hollow) {
             $ring = New-Object System.Drawing.Pen -ArgumentList $Color, 6
             $g.DrawEllipse($ring, 5, 5, 22, 22)
             $ring.Dispose()
         } else {
-            $g.FillEllipse($brush, 2, 2, 28, 28)
-            $g.DrawEllipse($pen, 2, 2, 28, 28)
+            $g.FillEllipse($brush, 1, 1, 30, 30)   # no border
         }
         if ($Question) {
             # Drawn as an outline that is filled and also stroked, which makes it extra bold.
@@ -688,7 +686,7 @@ function Show-Gui {
             $g.DrawPath($qPen, $path)
             $qPen.Dispose(); $path.Dispose(); $fmt.Dispose()
         }
-        $pen.Dispose(); $brush.Dispose(); $g.Dispose()
+        $brush.Dispose(); $g.Dispose()
         return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
     }
     $icons = @{
