@@ -2,7 +2,7 @@
 
 **Turn SQM / CAKE on and off on your OpenWrt router and access points from the Windows tray, with one click.**
 
-[![Latest release](https://img.shields.io/github/v/release/dux1976/cake-switch)](../../releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/duqsapps/cake-switch)](../../releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
