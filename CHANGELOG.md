@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.0 (2026-11-01)
+
+- The tray dot shows a white "?" when the main device's state hasn't been checked in the last 15 seconds, so you can tell a fresh state from an old one. Pointing at the dot checks again and the "?" goes away.
+
 ## 1.5.0 (2026-11-01)
 
 - New **Check for changes** setting in the window: every 15 seconds, 30 seconds, 1 minute, 5 minutes, 10 minutes, 15 minutes, 1 hour, or only at start (default 10 minutes). Pointing at the tray icon, opening its menu or the window still checks right away.

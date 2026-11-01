@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.5.0'
+$AppVersion = '1.6.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -499,7 +499,7 @@ function Show-Gui {
         $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '')
         # Job = running ssh job; Next = action clicked while busy, started when the job finishes.
         # State = last result (ON / OFF / Error / Enabled, not active), or Working while switching.
-        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = '' }
+        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = ''; CheckedAt = [datetime]::MinValue }
         return $grid.Rows[$i]
     }
 
@@ -560,6 +560,7 @@ function Show-Gui {
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
                 $row.Tag.State = $state
+                $row.Tag.CheckedAt = Get-Date
                 if ($row.Tag.Next) {
                     $verb = $row.Tag.Next
                     $row.Tag.Next = $null
@@ -657,7 +658,8 @@ function Show-Gui {
     # --- tray icon: shows the state of the first device in the list ("the main one") ---------------
 
     # Hollow = only a ring (used for "checking/switching", so it can't be mistaken for OFF's grey dot).
-    function New-DotIcon([System.Drawing.Color]$Color, [switch]$Hollow) {
+    # Question = a white "?" on the dot: the state shown hasn't been checked for a while.
+    function New-DotIcon([System.Drawing.Color]$Color, [switch]$Hollow, [switch]$Question) {
         $bmp = New-Object System.Drawing.Bitmap -ArgumentList 32, 32
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
@@ -672,6 +674,15 @@ function Show-Gui {
             $g.FillEllipse($brush, 2, 2, 28, 28)
             $g.DrawEllipse($pen, 2, 2, 28, 28)
         }
+        if ($Question) {
+            $font = New-Object System.Drawing.Font -ArgumentList 'Segoe UI', 18, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+            $fmt = New-Object System.Drawing.StringFormat
+            $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+            $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
+            $g.DrawString('?', $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF -ArgumentList 0, 1, 32, 32), $fmt)
+            $fmt.Dispose(); $font.Dispose()
+        }
         $pen.Dispose(); $brush.Dispose(); $g.Dispose()
         return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
     }
@@ -680,7 +691,12 @@ function Show-Gui {
         OFF     = New-DotIcon $StateColors.OFF
         Error   = New-DotIcon $StateColors.Error
         Unknown = New-DotIcon $StateColors.Busy -Hollow
+        'ON?'    = New-DotIcon $StateColors.ON -Question
+        'OFF?'   = New-DotIcon $StateColors.OFF -Question
+        'Error?' = New-DotIcon $StateColors.Error -Question
     }
+    # After this many seconds without a fresh status from the main device, its dot gets a "?".
+    $StaleSeconds = 15
     # Mutable state shared by the handlers (assigning a plain variable inside a handler would only
     # create a local copy).
     $ui = @{ TrayKey = ''; Exiting = $false; Done = $false; HintShown = $false; Syncing = $false; LastCheck = [datetime]::MinValue }
@@ -696,6 +712,8 @@ function Show-Gui {
         $name = ''; $state = ''
         if ($row) { $name = "$($row.Cells['Name'].Value)".Trim(); $state = "$($row.Tag.State)" }
         $key = switch ($state) { 'ON' { 'ON' } 'OFF' { 'OFF' } 'Error' { 'Error' } 'Enabled, not active' { 'Error' } default { 'Unknown' } }
+        # Runs every 200 ms (status timer), so the "?" appears on time without a timer of its own.
+        if ($key -ne 'Unknown' -and ((Get-Date) - $row.Tag.CheckedAt).TotalSeconds -ge $StaleSeconds) { $key = "$key?" }
         # Several lines; NotifyIcon.Text allows at most 63 characters in total.
         $tip = if (-not $row) { 'CAKE Switch - no devices' } else {
             switch ($state) {
