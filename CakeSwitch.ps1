@@ -675,13 +675,18 @@ function Show-Gui {
             $g.DrawEllipse($pen, 2, 2, 28, 28)
         }
         if ($Question) {
-            $font = New-Object System.Drawing.Font -ArgumentList 'Segoe UI', 18, ([System.Drawing.FontStyle]::Bold), ([System.Drawing.GraphicsUnit]::Pixel)
+            # Drawn as an outline that is filled and also stroked, which makes it extra bold.
             $fmt = New-Object System.Drawing.StringFormat
             $fmt.Alignment = [System.Drawing.StringAlignment]::Center
             $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-            $g.TextRenderingHint = [System.Drawing.Text.TextRenderingHint]::AntiAliasGridFit
-            $g.DrawString('?', $font, [System.Drawing.Brushes]::White, (New-Object System.Drawing.RectangleF -ArgumentList 0, 1, 32, 32), $fmt)
-            $fmt.Dispose(); $font.Dispose()
+            $path = New-Object System.Drawing.Drawing2D.GraphicsPath
+            $path.AddString('?', (New-Object System.Drawing.FontFamily -ArgumentList 'Segoe UI'), [int][System.Drawing.FontStyle]::Bold, 22,
+                            (New-Object System.Drawing.RectangleF -ArgumentList 0, 1, 32, 32), $fmt)
+            $qPen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 2.5
+            $qPen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
+            $g.FillPath([System.Drawing.Brushes]::White, $path)
+            $g.DrawPath($qPen, $path)
+            $qPen.Dispose(); $path.Dispose(); $fmt.Dispose()
         }
         $pen.Dispose(); $brush.Dispose(); $g.Dispose()
         return [System.Drawing.Icon]::FromHandle($bmp.GetHicon())
