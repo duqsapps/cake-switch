@@ -6,11 +6,9 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 ![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-<!--
-  Screenshot / GIF goes here. Save it as docs/screenshot.png (or docs/demo.gif)
-  and replace this comment with:
-  ![CAKE Switch: device list and tray icon](docs/screenshot.png)
--->
+![CAKE Switch window with a router and an access point](docs/screenshot.png)
+
+![Clicking the tray dot switches CAKE off and on; hovering shows the speed limits](docs/tray.gif)
 
 CAKE is great against bufferbloat, but its bandwidth limit also caps your speed. Sometimes you want it off for a moment: a speed test, a big download, or checking whether SQM is the cause of a problem. Doing that in LuCI means logging in, finding the SQM page, unticking a box and saving, on every device. CAKE Switch does it in one click from the tray, and the dot next to the clock always shows whether CAKE is really active.
 
