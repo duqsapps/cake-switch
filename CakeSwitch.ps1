@@ -682,7 +682,7 @@ function Show-Gui {
             $path = New-Object System.Drawing.Drawing2D.GraphicsPath
             $path.AddString('?', (New-Object System.Drawing.FontFamily -ArgumentList 'Segoe UI'), [int][System.Drawing.FontStyle]::Bold, 22,
                             (New-Object System.Drawing.RectangleF -ArgumentList 0, 1, 32, 32), $fmt)
-            $qPen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 2.5
+            $qPen = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::White), 1.2
             $qPen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
             $g.FillPath([System.Drawing.Brushes]::White, $path)
             $g.DrawPath($qPen, $path)
