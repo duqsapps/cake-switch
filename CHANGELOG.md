@@ -3,6 +3,7 @@
 ## 1.4.0 (2026-11-01)
 
 - Follows changes made from other PCs (or LuCI) much sooner: the state is re-checked every 15 seconds instead of every minute, right away when you point at the tray icon or open its menu or the window, and for all devices while the window is open.
+- Running a second copy of CakeSwitch (e.g. from a download folder) no longer points "Start with Windows" at that copy; the entry is only updated if the copy it points to was moved or deleted.
 
 ## 1.3.0 (2026-11-01)
 

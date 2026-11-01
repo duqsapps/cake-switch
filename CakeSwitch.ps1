@@ -812,8 +812,16 @@ function Show-Gui {
     })
     $form.Add_FormClosed({ try { Exit-App } catch { } })   # e.g. Windows shutting down
 
-    # Refresh the Run entry if autostart is on, in case the folder was moved since it was set.
-    try { if (Test-Autostart) { Set-Autostart $true } } catch { }
+    # If autostart is on but its entry points at a script that no longer exists (the folder was moved),
+    # point it here. Entries that point at another existing copy (e.g. the installed one, while a
+    # test copy runs) are left alone.
+    try {
+        if (Test-Autostart) {
+            $current = "$((Get-ItemProperty -LiteralPath $AutostartKey -Name $AutostartName).$AutostartName)"
+            $m = [regex]::Match($current, '-File\s+"([^"]+)"')
+            if ($m.Success -and -not (Test-Path -LiteralPath $m.Groups[1].Value)) { Set-Autostart $true }
+        }
+    } catch { }
     Sync-Autostart
     foreach ($r in $grid.Rows) { Start-Row $r 'status' }
     $timer.Start()
