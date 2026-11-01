@@ -4,6 +4,7 @@
 
 Unicode true
 !include "MUI2.nsh"
+!include "Sections.nsh"
 
 ; The version comes from $AppVersion in CakeSwitch.ps1 (override with -DVERSION=x.y.z).
 !ifndef VERSION
@@ -105,6 +106,17 @@ Section /o "Desktop shortcut" SecDesktop
   SetShellVarContext all
   CreateShortcut "$DESKTOP\${APPNAME}.lnk" "${LAUNCHER}" '${LAUNCHARGS}' "$INSTDIR\cakeswitch.ico" 0 SW_SHOWNORMAL "" "Switch SQM/CAKE on your OpenWrt devices"
 SectionEnd
+
+; An update keeps the current "Start with Windows" setting: the option starts ticked only on a
+; fresh install, or when the existing install has the autostart entry.
+Function .onInit
+  ReadRegStr $0 HKLM "${UNINSTKEY}" "InstallLocation"
+  StrCmp $0 "" done
+  ReadRegStr $1 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "${APPNAME}"
+  StrCmp $1 "" 0 done
+  !insertmacro UnselectSection ${SecAutostart}
+done:
+FunctionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecApp} "The app, a Start menu entry and the uninstaller."
