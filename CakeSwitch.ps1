@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.0.0'
+$AppVersion = '1.1.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -616,7 +616,7 @@ function Show-Gui {
         $name = ''; $state = ''
         if ($row) { $name = "$($row.Cells['Name'].Value)".Trim(); $state = "$($row.Tag.State)" }
         $key = switch ($state) { 'ON' { 'ON' } 'OFF' { 'OFF' } 'Error' { 'Error' } 'Enabled, not active' { 'Error' } default { 'Unknown' } }
-        $label = switch ($state) { 'ON' { 'CAKE is ON' } 'OFF' { 'CAKE is OFF' } 'Working' { 'switching...' } '' { 'checking...' } default { $state } }
+        $label = switch ($state) { 'ON' { 'CAKE ON (click: off)' } 'OFF' { 'CAKE OFF (click: on)' } 'Working' { 'switching...' } '' { 'checking...' } default { $state } }
         $tip = if ($row) { "CAKE Switch - ${name}: $label" } else { 'CAKE Switch - no devices' }
         if ($tip.Length -gt 63) { $tip = $tip.Substring(0, 63) }   # NotifyIcon.Text limit
         if ($ui.TrayKey -eq "$key|$tip") { return }
@@ -689,9 +689,21 @@ function Show-Gui {
     $miOpen.Add_Click({ Invoke-Safe { Show-Window } })
     $miExit.Add_Click({ Invoke-Safe { Exit-App } })
     $notify.ContextMenuStrip = $menu
+    # Left-click switches the main device: ON -> off, OFF -> on. While its state is unknown or an
+    # error, the click opens the window instead so the problem can be seen.
+    function Switch-MainByClick {
+        $row = Get-MainRow
+        if (-not $row) { Show-Window; return }
+        if ($row.Tag.State -eq 'Working') { return }   # already switching: ignore extra clicks
+        switch ("$($row.Tag.State)") {
+            'ON' { Start-Main 'off' }
+            'OFF' { Start-Main 'on' }
+            default { Show-Window }
+        }
+    }
     $notify.Add_MouseClick({
         param($s, $e)
-        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Safe { Show-Window } }
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Invoke-Safe { Switch-MainByClick } }
     })
 
     # Keep the tray icon current when CAKE is switched elsewhere (LuCI, another PC): check the main
