@@ -20,6 +20,7 @@ It's a single PowerShell script. It uses the OpenSSH client built into Windows 1
 - **Shows your CAKE limits**: hover the dot to see the download / upload limits from your SQM settings.
 - **Router and access points**: manage several OpenWrt devices in one list and switch one, some or all of them. Devices are contacted in parallel, so an offline AP doesn't hold up the rest.
 - **Checks the real state**: "ON" means a `cake` qdisc is actually active (read back with `tc`), not just that the setting is ticked. It re-checks every minute, so it also follows changes made in LuCI.
+- **Takes care of flow offloading**: software and hardware flow offloading bypass CAKE, so turning CAKE on switches both off, and turning CAKE off puts them back the way they were.
 - **Per-interface control**: switch every SQM queue on a device, or just one (e.g. `pppoe-wan`).
 - **One-click SSH key setup**: enter each device's root password once, and switching works without a password after that.
 - **Command line too**: `On`, `Off` and `Status` for scripts, desktop shortcuts, hotkeys and Task Scheduler.
@@ -124,6 +125,8 @@ uci commit sqm
 /etc/init.d/sqm restart
 ```
 The status is then read back with `uci` and `tc qdisc show`, so "ON" means a `cake` qdisc is really active.
+
+Flow offloading (*Network → Firewall → Routing/NAT Offloading* in LuCI) lets traffic skip the queues, so CAKE can't shape it. Before turning CAKE on, the current `flow_offloading` and `flow_offloading_hw` settings of `firewall.@defaults[0]` are saved to `/etc/cake-switch.offload` on the device and both are set to 0 (then `uci commit firewall` and a firewall reload). Turning CAKE off restores the saved values and deletes the file. Because the file is on the device, it works the same from every PC. Devices without a firewall config (e.g. dumb APs) are left alone. `Status` shows the current and the saved offloading settings.
 
 ## Troubleshooting
 

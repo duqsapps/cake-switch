@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.6.1'
+$AppVersion = '1.7.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -154,9 +154,22 @@ function Get-SshArgs($d) {
 # Prints machine-readable lines:
 #   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1> <download kbit/s> <upload kbit/s>
 #         (active = a cake qdisc is installed on the interface or its ifb4<interface>; empty fields are '-')
+#   OFFLOAD <software 0|1|-> <hardware 0|1|-> <saved software> <saved hardware>
+#         (firewall flow offloading now, and what it was before CAKE was turned on; '-' = not set)
 #   ERROR <message>
+# Flow offloading bypasses the qdiscs, so CAKE can't shape that traffic. Turning CAKE on saves the
+# offloading settings in /etc/cake-switch.offload on the device and turns both off; turning CAKE off
+# puts them back. The file lives on the device, so every PC sees the same saved state.
 
 $RemoteScript = @'
+OFFL=/etc/cake-switch.offload
+FW='firewall.@defaults[0]'
+fw_apply() {
+    if ! uci commit firewall; then echo "ERROR uci commit firewall failed"; exit 3; fi
+    /etc/init.d/firewall reload >/dev/null 2>&1
+}
+hasfw=0; uci -q get "$FW" >/dev/null 2>&1 && hasfw=1
+
 secs=""
 for s in $(uci -X show sqm 2>/dev/null | sed -n 's/^sqm\.\([^.=]*\)=queue$/\1/p'); do
     if [ -z "$IFACE" ] || [ "$(uci -q get sqm.$s.interface)" = "$IFACE" ]; then
@@ -169,11 +182,37 @@ if [ -z "$secs" ]; then
     exit 2
 fi
 
+# On: remember the offloading settings (only the first time, so a second "on" can't overwrite them
+# with "off"), then turn both off before starting SQM.
+if [ "$ACTION" = "on" ] && [ $hasfw = 1 ]; then
+    if [ ! -f "$OFFL" ]; then
+        echo "$(uci -q get "$FW.flow_offloading" || echo -) $(uci -q get "$FW.flow_offloading_hw" || echo -)" > "$OFFL"
+    fi
+    ch=0
+    for o in flow_offloading flow_offloading_hw; do
+        if [ "$(uci -q get "$FW.$o")" = 1 ]; then uci set "$FW.$o=0"; ch=1; fi
+    done
+    [ $ch = 1 ] && fw_apply
+fi
+
 if [ "$ACTION" = "on" ] || [ "$ACTION" = "off" ]; then
     v=0; [ "$ACTION" = "on" ] && v=1
     for s in $secs; do uci set sqm.$s.enabled=$v; done
     if ! uci commit sqm; then echo "ERROR uci commit sqm failed"; exit 3; fi
     /etc/init.d/sqm restart >/dev/null 2>&1
+fi
+
+# Off: put the offloading settings back the way they were before CAKE was turned on.
+if [ "$ACTION" = "off" ] && [ -f "$OFFL" ]; then
+    if [ $hasfw = 1 ]; then
+        read sw hw < "$OFFL"
+        for pair in "flow_offloading $sw" "flow_offloading_hw $hw"; do
+            set -- $pair
+            if [ -z "$2" ] || [ "$2" = - ]; then uci -q delete "$FW.$1"; else uci set "$FW.$1=$2"; fi
+        done
+        fw_apply
+    fi
+    rm -f "$OFFL"
 fi
 
 for s in $secs; do
@@ -187,6 +226,10 @@ for s in $secs; do
     fi
     echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a $(uci -q get sqm.$s.download || echo 0) $(uci -q get sqm.$s.upload || echo 0)"
 done
+if [ $hasfw = 1 ]; then
+    saved="- -"; [ -f "$OFFL" ] && saved=$(cat "$OFFL")
+    echo "OFFLOAD $(uci -q get "$FW.flow_offloading" || echo -) $(uci -q get "$FW.flow_offloading_hw" || echo -) $saved"
+fi
 '@
 
 # --- running it: jobs are started without waiting, so several devices are handled in parallel ---
@@ -233,7 +276,7 @@ function Test-CakeJobDone($job) {
 
 function Complete-CakeJob($job) {
     $d = $job.Device
-    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Error = $job.Error }
+    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Offload = $null; Error = $job.Error }
     if (-not $job.Process) { return $result }
     $p = $job.Process
     if (-not $p.HasExited) {
@@ -257,6 +300,12 @@ function Complete-CakeJob($job) {
                 $result.Queues += $q
                 if ($q.Enabled) { $result.Enabled = $true }
                 if ($q.Active) { $result.Active = $true }
+            }
+            'OFFLOAD' {
+                if ($f.Count -ge 5) {
+                    $result.Offload = [pscustomobject]@{ Software = ($f[1] -eq '1'); Hardware = ($f[2] -eq '1')
+                                                         Saved = ($f[3] -ne '-'); SavedSoftware = ($f[3] -eq '1'); SavedHardware = ($f[4] -eq '1') }
+                }
             }
             'ERROR' { $result.Error = ($f[1..($f.Count - 1)] -join ' ') }
         }
@@ -317,6 +366,13 @@ function Format-Status($r) {
     }
     foreach ($q in $r.Queues) {
         $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4} down={5} up={6}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active, (Format-Rate $q.Download), (Format-Rate $q.Upload)
+    }
+    $o = $r.Offload
+    if ($o) {
+        $onOff = { param($b) if ($b) { 'on' } else { 'off' } }
+        $line = "  flow offloading: software {0}, hardware {1}" -f (& $onOff $o.Software), (& $onOff $o.Hardware)
+        if ($o.Saved) { $line += " (before CAKE: software {0}, hardware {1}; restored when CAKE is turned off)" -f (& $onOff $o.SavedSoftware), (& $onOff $o.SavedHardware) }
+        $lines += $line
     }
     return $lines -join "`r`n"
 }
@@ -548,7 +604,7 @@ function Show-Gui {
             $row.Tag.Job = $null
             # No message boxes in here: this runs every 200 ms. Errors go into the row's status instead.
             try {
-                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @() } }
+                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @(); Offload = $null } }
                 $state = Get-StateText $r
                 $limits = if ($state -eq 'ON') { Get-LimitText $r } else { '' }
                 $row.Tag.Limits = $limits

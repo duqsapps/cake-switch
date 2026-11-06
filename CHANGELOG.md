@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.0 (2026-11-06)
+
+- Turning CAKE on now saves the firewall's software and hardware flow offloading settings on the device and switches both off, because offloaded traffic bypasses CAKE. Turning CAKE off restores them. The saved state is kept on the device (`/etc/cake-switch.offload`), so it works from any PC.
+- The status (window tooltip and command line) shows the flow offloading settings.
+
 ## 1.6.1 (2026-11-01)
 
 - The tray dot no longer has a white border.
