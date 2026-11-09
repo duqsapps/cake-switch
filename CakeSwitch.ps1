@@ -203,16 +203,15 @@ if [ "$ACTION" = "on" ] || [ "$ACTION" = "off" ]; then
     /etc/init.d/sqm restart >/dev/null 2>&1
 fi
 
-# Off: put the offloading settings back the way they were before CAKE was turned on.
+# Off: undo only our own change: turn a setting back on if it was on before CAKE and is still off
+# (0, as we left it). A change made meanwhile, e.g. in LuCI, is kept.
 if [ "$ACTION" = "off" ] && [ -f "$OFFL" ]; then
     if [ $hasfw = 1 ]; then
         read sw hw < "$OFFL"
         ch=0
         for pair in "flow_offloading $sw" "flow_offloading_hw $hw"; do
             set -- $pair
-            [ "$(uci -q get "$FW.$1" || echo -)" = "${2:--}" ] && continue
-            if [ -z "$2" ] || [ "$2" = - ]; then uci -q delete "$FW.$1"; else uci set "$FW.$1=$2"; fi
-            ch=1
+            if [ "$2" = 1 ] && [ "$(uci -q get "$FW.$1")" = 0 ]; then uci set "$FW.$1=1"; ch=1; fi
         done
         [ $ch = 1 ] && fw_apply
     fi
