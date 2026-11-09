@@ -480,7 +480,7 @@ function Show-Gui {
 
     $grid = New-Object System.Windows.Forms.DataGridView
     $grid.Location = New-Object System.Drawing.Point(12, 12)
-    $grid.Size = New-Object System.Drawing.Size(806, 250)
+    $grid.Size = New-Object System.Drawing.Size(876, 250)
     $grid.Anchor = 'Top, Bottom, Left, Right'
     $grid.AllowUserToAddRows = $false
     $grid.AllowUserToResizeRows = $false
@@ -502,7 +502,7 @@ function Show-Gui {
 
     $info = New-Object System.Windows.Forms.Label
     $info.Location = New-Object System.Drawing.Point(12, 268)
-    $info.Size = New-Object System.Drawing.Size(806, 34)
+    $info.Size = New-Object System.Drawing.Size(876, 34)
     $info.Anchor = 'Bottom, Left, Right'
     $info.ForeColor = [System.Drawing.Color]::DimGray
     $info.Text = 'Edit a cell (double-click or F2) to change a device''s name, IP address, user, port or SQM interface; changes are saved automatically. Interface empty = all SQM queues on that device. Select several rows to switch them together.'
