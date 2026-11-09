@@ -166,7 +166,8 @@ OFFL=/etc/cake-switch.offload
 FW='firewall.@defaults[0]'
 fw_apply() {
     if ! uci commit firewall; then echo "ERROR uci commit firewall failed"; exit 3; fi
-    /etc/init.d/firewall reload >/dev/null 2>&1
+    # Only reload a firewall that is in use (an AP may have the config but the service disabled).
+    /etc/init.d/firewall enabled 2>/dev/null && /etc/init.d/firewall reload >/dev/null 2>&1
 }
 hasfw=0; uci -q get "$FW" >/dev/null 2>&1 && hasfw=1
 
@@ -206,11 +207,14 @@ fi
 if [ "$ACTION" = "off" ] && [ -f "$OFFL" ]; then
     if [ $hasfw = 1 ]; then
         read sw hw < "$OFFL"
+        ch=0
         for pair in "flow_offloading $sw" "flow_offloading_hw $hw"; do
             set -- $pair
+            [ "$(uci -q get "$FW.$1" || echo -)" = "${2:--}" ] && continue
             if [ -z "$2" ] || [ "$2" = - ]; then uci -q delete "$FW.$1"; else uci set "$FW.$1=$2"; fi
+            ch=1
         done
-        fw_apply
+        [ $ch = 1 ] && fw_apply
     fi
     rm -f "$OFFL"
 fi
