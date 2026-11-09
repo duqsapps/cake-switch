@@ -3,6 +3,7 @@
 ## 1.7.0 (2026-11-06)
 
 - Turning CAKE on now saves the firewall's software and hardware flow offloading settings on the device and switches both off, because offloaded traffic bypasses CAKE. Turning CAKE off turns back on only what it turned off, and only if it's still off, so changes you make in LuCI meanwhile are kept. The firewall is only reloaded when a setting actually changes. The saved state is kept on the device (`/etc/cake-switch.offload`), so it works from any PC.
+- New **Turn offloading off with CAKE** checkbox in the window (ticked by default) to switch this on or off.
 - The status (window tooltip and command line) shows the flow offloading settings.
 
 ## 1.6.1 (2026-11-01)

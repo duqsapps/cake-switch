@@ -94,12 +94,14 @@ function Get-DeviceProblem($d) {
 
 function Read-Config {
     # CheckInterval: seconds between background status checks in the GUI; 0 = only when it starts.
-    $cfg = [pscustomobject]@{ KeyFile = ''; CheckInterval = 0; Devices = @() }
+    # ManageOffload: turn flow offloading off while CAKE is on (and back afterwards).
+    $cfg = [pscustomobject]@{ KeyFile = ''; CheckInterval = 0; ManageOffload = $true; Devices = @() }
     if (Test-Path -LiteralPath $ConfigFile) {
         $json = Get-Content -LiteralPath $ConfigFile -Raw | ConvertFrom-Json
         if ($json.KeyFile) { $cfg.KeyFile = $json.KeyFile }
         $ci = 0
         if ($null -ne $json.CheckInterval -and [int]::TryParse("$($json.CheckInterval)", [ref]$ci) -and $ci -ge 0) { $cfg.CheckInterval = $ci }
+        if ($null -ne $json.ManageOffload) { $cfg.ManageOffload = [bool]$json.ManageOffload }
         if ($json.Devices) {
             $cfg.Devices = @($json.Devices | ForEach-Object {
                 $u = if ($_.User) { $_.User } else { 'root' }
@@ -122,6 +124,7 @@ function Save-Config($cfg) {
     $data = [ordered]@{
         KeyFile = "$($cfg.KeyFile)"
         CheckInterval = $ci
+        ManageOffload = [bool]$cfg.ManageOffload
         Devices = @($cfg.Devices | ForEach-Object {
             $p = 22; [void][int]::TryParse("$($_.Port)", [ref]$p)
             [ordered]@{ Name = "$($_.Name)"; Address = "$($_.Address)"; User = "$($_.User)"; Port = $p; Interface = "$($_.Interface)" }
@@ -183,9 +186,10 @@ if [ -z "$secs" ]; then
     exit 2
 fi
 
-# On: remember the offloading settings (only the first time, so a second "on" can't overwrite them
-# with "off"), then turn both off before starting SQM.
-if [ "$ACTION" = "on" ] && [ $hasfw = 1 ]; then
+# On (if OFFLOAD=1, the "Turn offloading off with CAKE" setting): remember the offloading settings
+# (only the first time, so a second "on" can't overwrite them with "off"), then turn both off before
+# starting SQM.
+if [ "$ACTION" = "on" ] && [ "$OFFLOAD" = 1 ] && [ $hasfw = 1 ]; then
     if [ ! -f "$OFFL" ]; then
         echo "$(uci -q get "$FW.flow_offloading" || echo -) $(uci -q get "$FW.flow_offloading_hw" || echo -)" > "$OFFL"
     fi
@@ -203,7 +207,8 @@ if [ "$ACTION" = "on" ] || [ "$ACTION" = "off" ]; then
     /etc/init.d/sqm restart >/dev/null 2>&1
 fi
 
-# Off: undo only our own change: turn a setting back on if it was on before CAKE and is still off
+# Off: always (whatever OFFLOAD says, so unticking the setting while CAKE is on can't leave
+# offloading off), undo only our own change: turn a setting back on if it was on before CAKE and is still off
 # (0, as we left it). A change made meanwhile, e.g. in LuCI, is kept.
 if [ "$ACTION" = "off" ] && [ -f "$OFFL" ]; then
     if [ $hasfw = 1 ]; then
@@ -259,7 +264,8 @@ function Start-CakeJob($d, [ValidateSet('on', 'off', 'status')][string]$Verb) {
         $job.Err = $job.Process.StandardError.ReadToEndAsync()
         # The leading newline keeps a UTF-8 BOM, which .NET Framework writes to stdin when the console
         # code page is 65001, on a line of its own instead of corrupting "ACTION=...".
-        $script = "`nACTION=$Verb`nIFACE=$($d.Interface)`n" + $RemoteScript
+        $offl = if ($Config.ManageOffload) { 1 } else { 0 }
+        $script = "`nACTION=$Verb`nIFACE=$($d.Interface)`nOFFLOAD=$offl`n" + $RemoteScript
         # If ssh fails at once (host down, key refused) it exits before reading its input, and the write
         # fails with "broken pipe" / "pipe has been ended". Ignore that: the exit code and ssh's own
         # error message, reported by Complete-CakeJob, say what really went wrong.
@@ -466,9 +472,9 @@ function Show-Gui {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CAKE Switch $AppVersion"
-    $form.ClientSize = New-Object System.Drawing.Size(830, 392)
+    $form.ClientSize = New-Object System.Drawing.Size(900, 392)
     # Wide enough for the button row and the "Start with Windows" box (about x=810).
-    $form.MinimumSize = New-Object System.Drawing.Size(850, 330)
+    $form.MinimumSize = New-Object System.Drawing.Size(920, 330)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -519,10 +525,24 @@ function Show-Gui {
     $autoBox = New-Object System.Windows.Forms.CheckBox
     $autoBox.Text = 'Start with Windows'
     $autoBox.AutoSize = $true
-    $autoBox.Location = New-Object System.Drawing.Point(($x + 6), 320)
+    $autoBox.Location = New-Object System.Drawing.Point(($x + 6), 310)
     $autoBox.Anchor = 'Bottom, Left'
     $form.Controls.Add($autoBox)
     (New-Object System.Windows.Forms.ToolTip).SetToolTip($autoBox, 'Start CAKE Switch when you sign in to Windows, minimized to the tray.')
+    $offloadBox = New-Object System.Windows.Forms.CheckBox
+    $offloadBox.Text = 'Turn offloading off with CAKE'
+    $offloadBox.AutoSize = $true
+    $offloadBox.Location = New-Object System.Drawing.Point(($x + 6), 332)
+    $offloadBox.Anchor = 'Bottom, Left'
+    $offloadBox.Checked = [bool]$Config.ManageOffload
+    $form.Controls.Add($offloadBox)
+    (New-Object System.Windows.Forms.ToolTip).SetToolTip($offloadBox, "Flow offloading lets traffic bypass CAKE. When ticked, turning CAKE on switches software and hardware`r`nflow offloading off, and turning CAKE off switches back on what it switched off.")
+    $offloadBox.Add_CheckedChanged({
+        Invoke-Safe {
+            $Config.ManageOffload = $offloadBox.Checked
+            Save-Config $Config
+        }
+    })
 
     # How often to re-check in the background (each check is one SSH login, logged by the router).
     $intervalChoices = @(@(15, '15 seconds'), @(30, '30 seconds'), @(60, '1 minute'), @(300, '5 minutes'),
