@@ -418,13 +418,13 @@ function Get-RttText($r) {
     return ($vals -join ' / ')
 }
 
-# Firewall flow offloading, e.g. "software + hardware", "off" or "off (software + hardware without CAKE)".
+# Firewall flow offloading, e.g. "sw + hw", "off" or "off (sw + hw on without CAKE)" (sw/hw = software/hardware).
 function Get-OffloadText($r) {
     $o = $r.Offload
     if (-not $o) { return 'n/a' }
-    $kind = { param($sw, $hw) if ($sw -and $hw) { 'software + hardware' } elseif ($sw) { 'software' } elseif ($hw) { 'hardware' } else { 'off' } }
+    $kind = { param($sw, $hw) if ($sw -and $hw) { 'sw + hw' } elseif ($sw) { 'sw' } elseif ($hw) { 'hw' } else { 'off' } }
     $now = & $kind $o.Software $o.Hardware
-    if ($o.Saved -and ($o.SavedSoftware -or $o.SavedHardware)) { $now += " ($(& $kind $o.SavedSoftware $o.SavedHardware) without CAKE)" }
+    if ($o.Saved -and ($o.SavedSoftware -or $o.SavedHardware)) { $now += " ($(& $kind $o.SavedSoftware $o.SavedHardware) on without CAKE)" }
     return $now
 }
 
@@ -567,8 +567,8 @@ function Show-Gui {
     $grid.AutoSizeColumnsMode = 'Fill'
     $grid.BackgroundColor = [System.Drawing.SystemColors]::Window
     foreach ($c in @(@('Name', 'Name', 20), @('Address', 'IP address', 16), @('User', 'User', 8), @('Port', 'Port', 6),
-                     @('Interface', 'Interface', 11), @('Status', 'Status (double-click for details)', 32),
-                     @('Offload', 'Flow offloading', 22), @('Steering', 'Packet steering', 15), @('Rtt', 'CAKE RTT', 18))) {
+                     @('Interface', 'Interface', 11), @('Status', 'Status (double-click for details)', 30),
+                     @('Offload', 'Flow offloading (sw/hw)', 25), @('Steering', 'Packet steering', 15), @('Rtt', 'CAKE RTT', 18))) {
         $col = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $col.Name = $c[0]; $col.HeaderText = $c[1]; $col.FillWeight = $c[2]
         $col.SortMode = 'NotSortable'
