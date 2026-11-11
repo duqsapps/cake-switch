@@ -155,8 +155,11 @@ function Get-SshArgs($d) {
 
 # --- the shell script that runs on the device --------------------------------------------------
 # Prints machine-readable lines:
-#   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1> <download kbit/s> <upload kbit/s>
-#         (active = a cake qdisc is installed on the interface or its ifb4<interface>; empty fields are '-')
+#   QUEUE <section> <interface> <enabled 0|1> <qdisc> <active 0|1> <download kbit/s> <upload kbit/s> <rtt>
+#         (active = a cake qdisc is installed on the interface or its ifb4<interface>; empty fields are '-';
+#          rtt = CAKE's rtt per direction, comma-separated: from tc while CAKE runs (e.g. 30ms), else from
+#          the SQM options ("rtt 50ms" or a keyword like regional), '-' = not set (CAKE's default, 100 ms))
+#   STEER <packet_steering 0|1|2|-> <number of CPUs>
 #   OFFLOAD <software 0|1|-> <hardware 0|1|-> <saved software> <saved hardware>
 #         (firewall flow offloading now, and what it was before CAKE was turned on; '-' = not set)
 #   ERROR <message>
@@ -232,8 +235,28 @@ for s in $secs; do
             tc qdisc show dev "$dev" 2>/dev/null | grep -q '^qdisc cake ' && a=1
         done
     fi
-    echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a $(uci -q get sqm.$s.download || echo 0) $(uci -q get sqm.$s.upload || echo 0)"
+    r=""
+    if [ $a = 1 ]; then
+        for dev in "$i" "$ifb"; do
+            x=$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc cake .* rtt \([^ ]*\).*/\1/p' | head -n 1)
+            [ -n "$x" ] && r="$r,$x"
+        done
+    else
+        for opt in eqdisc_opts iqdisc_opts; do
+            o=" $(uci -q get sqm.$s.$opt) "
+            x=$(echo "$o" | sed -n 's/.* rtt \([^ ]*\) .*/\1/p')
+            if [ -z "$x" ]; then
+                for k in datacentre lan metro regional internet oceanic satellite interplanetary; do
+                    case "$o" in *" $k "*) x=$k;; esac
+                done
+            fi
+            r="$r,${x:--}"
+        done
+    fi
+    r=${r#,}
+    echo "QUEUE $s ${i:--} $(uci -q get sqm.$s.enabled || echo 0) $(uci -q get sqm.$s.qdisc || echo -) $a $(uci -q get sqm.$s.download || echo 0) $(uci -q get sqm.$s.upload || echo 0) ${r:--}"
 done
+echo "STEER $(uci -q get network.globals.packet_steering || echo -) $(grep -c ^processor /proc/cpuinfo 2>/dev/null || echo 0)"
 if [ $hasfw = 1 ]; then
     saved="- -"; [ -f "$OFFL" ] && saved=$(cat "$OFFL")
     echo "OFFLOAD $(uci -q get "$FW.flow_offloading" || echo -) $(uci -q get "$FW.flow_offloading_hw" || echo -) $saved"
@@ -285,7 +308,7 @@ function Test-CakeJobDone($job) {
 
 function Complete-CakeJob($job) {
     $d = $job.Device
-    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Offload = $null; Error = $job.Error }
+    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Offload = $null; Steering = $null; Error = $job.Error }
     if (-not $job.Process) { return $result }
     $p = $job.Process
     if (-not $p.HasExited) {
@@ -304,8 +327,9 @@ function Complete-CakeJob($job) {
                 $down = 0; $up = 0
                 if ($f.Count -gt 6) { [void][int]::TryParse($f[6], [ref]$down) }
                 if ($f.Count -gt 7) { [void][int]::TryParse($f[7], [ref]$up) }
+                $rtt = if ($f.Count -gt 8) { $f[8] } else { '' }
                 $q = [pscustomobject]@{ Section = $f[1]; Interface = $f[2]; Enabled = ($f[3] -eq '1'); Qdisc = $f[4]; Active = ($f[5] -eq '1')
-                                        Download = $down; Upload = $up }
+                                        Download = $down; Upload = $up; Rtt = $rtt }
                 $result.Queues += $q
                 if ($q.Enabled) { $result.Enabled = $true }
                 if ($q.Active) { $result.Active = $true }
@@ -315,6 +339,10 @@ function Complete-CakeJob($job) {
                     $result.Offload = [pscustomobject]@{ Software = ($f[1] -eq '1'); Hardware = ($f[2] -eq '1')
                                                          Saved = ($f[3] -ne '-'); SavedSoftware = ($f[3] -eq '1'); SavedHardware = ($f[4] -eq '1') }
                 }
+            }
+            'STEER' {
+                $cpus = 0; if ($f.Count -gt 2) { [void][int]::TryParse($f[2], [ref]$cpus) }
+                $result.Steering = [pscustomobject]@{ Value = "$($f[1])"; Cpus = $cpus }
             }
             'ERROR' { $result.Error = ($f[1..($f.Count - 1)] -join ' ') }
         }
@@ -365,6 +393,53 @@ function Get-LimitText($r) {
     return (@($parts) -join '; ')
 }
 
+# CAKE's rtt presets (tc shows them as numbers, e.g. regional = 30ms).
+$RttPresets = [ordered]@{ datacentre = 0.1; lan = 1; metro = 10; regional = 30; internet = 100; oceanic = 300; satellite = 1000; interplanetary = 3600000 }
+
+# One rtt value ("30ms", "100us", "1s", "regional" or '-') as "30 ms (regional)".
+function Format-OneRtt([string]$v) {
+    if (-not $v -or $v -eq '-') { return '100 ms (internet, default)' }
+    if ($RttPresets.Contains($v)) { $ms = $RttPresets[$v] }
+    else {
+        $m = [regex]::Match($v, '^([0-9.]+)(us|ms|s)?$')
+        if (-not $m.Success) { return $v }
+        $ms = [double]::Parse($m.Groups[1].Value, [Globalization.CultureInfo]::InvariantCulture)
+        switch ($m.Groups[2].Value) { 'us' { $ms = $ms / 1000 } 's' { $ms = $ms * 1000 } '' { $ms = $ms / 1000 } }
+    }
+    $num = if ($ms -ge 1000) { '{0:0.###} s' -f ($ms / 1000) } elseif ($ms -lt 1) { '{0:0.###} ms' -f $ms } else { '{0:0.###} ms' -f $ms }
+    $num = $num -replace ',', '.'
+    foreach ($k in $RttPresets.Keys) { if ([math]::Abs($RttPresets[$k] - $ms) -lt 0.0001) { return "$num ($k)" } }
+    return $num
+}
+
+# The RTT of all queues, e.g. "30 ms (regional)"; different values are listed once each.
+function Get-RttText($r) {
+    $vals = @($r.Queues | ForEach-Object { "$($_.Rtt)" -split ',' } | ForEach-Object { Format-OneRtt $_ } | Select-Object -Unique)
+    return ($vals -join ' / ')
+}
+
+# Firewall flow offloading, e.g. "software + hardware", "off" or "off (software + hardware without CAKE)".
+function Get-OffloadText($r) {
+    $o = $r.Offload
+    if (-not $o) { return 'n/a' }
+    $kind = { param($sw, $hw) if ($sw -and $hw) { 'software + hardware' } elseif ($sw) { 'software' } elseif ($hw) { 'hardware' } else { 'off' } }
+    $now = & $kind $o.Software $o.Hardware
+    if ($o.Saved -and ($o.SavedSoftware -or $o.SavedHardware)) { $now += " ($(& $kind $o.SavedSoftware $o.SavedHardware) without CAKE)" }
+    return $now
+}
+
+# Packet steering (network.globals.packet_steering: 0/unset = off, 1 = on, 2 = on, all CPUs).
+function Get-SteeringText($r) {
+    $st = $r.Steering
+    if (-not $st) { return 'n/a' }
+    $cpus = if ($st.Cpus -gt 0) { " ($($st.Cpus))" } else { '' }
+    switch ($st.Value) {
+        '2' { return "on, all CPUs$cpus" }
+        '1' { return 'on (not all CPUs)' }
+        default { return 'off' }
+    }
+}
+
 function Format-Status($r) {
     $head = "$($r.Device.Name) [$($r.Device.Address)]: $(Get-StateText $r)"
     if ($r.Active -and -not $r.Error) { $limits = Get-LimitText $r; if ($limits) { $head += " ($limits)" } }
@@ -374,8 +449,9 @@ function Format-Status($r) {
         $lines += '  (qdisc may not be cake, or SQM failed to start - check: logread | grep SQM)'
     }
     foreach ($q in $r.Queues) {
-        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4} down={5} up={6}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active, (Format-Rate $q.Download), (Format-Rate $q.Upload)
+        $lines += "  queue {0,-14} iface {1,-12} enabled={2} qdisc={3} cake active={4} down={5} up={6} rtt={7}" -f $q.Section, $q.Interface, [int]$q.Enabled, $q.Qdisc, [int]$q.Active, (Format-Rate $q.Download), (Format-Rate $q.Upload), ((@("$($q.Rtt)" -split ',' | ForEach-Object { Format-OneRtt $_ } | Select-Object -Unique)) -join ' / ')
     }
+    if ($r.Steering) { $lines += "  packet steering: $(Get-SteeringText $r)" }
     $o = $r.Offload
     if ($o) {
         $onOff = { param($b) if ($b) { 'on' } else { 'off' } }
@@ -472,15 +548,15 @@ function Show-Gui {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CAKE Switch $AppVersion"
-    $form.ClientSize = New-Object System.Drawing.Size(900, 392)
+    $form.ClientSize = New-Object System.Drawing.Size(1140, 392)
     # Wide enough for the button row and the "Start with Windows" box (about x=810).
-    $form.MinimumSize = New-Object System.Drawing.Size(920, 330)
+    $form.MinimumSize = New-Object System.Drawing.Size(1000, 330)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
     $grid = New-Object System.Windows.Forms.DataGridView
     $grid.Location = New-Object System.Drawing.Point(12, 12)
-    $grid.Size = New-Object System.Drawing.Size(876, 250)
+    $grid.Size = New-Object System.Drawing.Size(1116, 250)
     $grid.Anchor = 'Top, Bottom, Left, Right'
     $grid.AllowUserToAddRows = $false
     $grid.AllowUserToResizeRows = $false
@@ -490,19 +566,20 @@ function Show-Gui {
     $grid.EditMode = 'EditOnKeystrokeOrF2'
     $grid.AutoSizeColumnsMode = 'Fill'
     $grid.BackgroundColor = [System.Drawing.SystemColors]::Window
-    foreach ($c in @(@('Name', 'Name', 22), @('Address', 'IP address', 18), @('User', 'User', 9), @('Port', 'Port', 7),
-                     @('Interface', 'Interface', 12), @('Status', 'Status (double-click for details)', 32))) {
+    foreach ($c in @(@('Name', 'Name', 20), @('Address', 'IP address', 16), @('User', 'User', 8), @('Port', 'Port', 6),
+                     @('Interface', 'Interface', 11), @('Status', 'Status (double-click for details)', 32),
+                     @('Offload', 'Flow offloading', 22), @('Steering', 'Packet steering', 15), @('Rtt', 'CAKE RTT', 18))) {
         $col = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $col.Name = $c[0]; $col.HeaderText = $c[1]; $col.FillWeight = $c[2]
         $col.SortMode = 'NotSortable'
         [void]$grid.Columns.Add($col)
     }
-    $grid.Columns['Status'].ReadOnly = $true
+    foreach ($n in @('Status', 'Offload', 'Steering', 'Rtt')) { $grid.Columns[$n].ReadOnly = $true }
     $grid.Columns['Status'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
     $info = New-Object System.Windows.Forms.Label
     $info.Location = New-Object System.Drawing.Point(12, 268)
-    $info.Size = New-Object System.Drawing.Size(876, 34)
+    $info.Size = New-Object System.Drawing.Size(1116, 34)
     $info.Anchor = 'Bottom, Left, Right'
     $info.ForeColor = [System.Drawing.Color]::DimGray
     $info.Text = 'Edit a cell (double-click or F2) to change a device''s name, IP address, user, port or SQM interface; changes are saved automatically. Interface empty = all SQM queues on that device. Select several rows to switch them together.'
@@ -575,7 +652,7 @@ function Show-Gui {
     }
 
     function Add-DeviceRow($d) {
-        $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '')
+        $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '', '', '', '')
         # Job = running ssh job; Next = action clicked while busy, started when the job finishes.
         # State = last result (ON / OFF / Error / Enabled, not active), or Working while switching.
         $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = ''; CheckedAt = [datetime]::MinValue }
@@ -627,7 +704,7 @@ function Show-Gui {
             $row.Tag.Job = $null
             # No message boxes in here: this runs every 200 ms. Errors go into the row's status instead.
             try {
-                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @(); Offload = $null } }
+                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @(); Offload = $null; Steering = $null } }
                 $state = Get-StateText $r
                 $limits = if ($state -eq 'ON') { Get-LimitText $r } else { '' }
                 $row.Tag.Limits = $limits
@@ -638,6 +715,11 @@ function Show-Gui {
                     default { $StateColors.Error }
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
+                if (-not $r.Error) {
+                    $row.Cells['Offload'].Value = Get-OffloadText $r
+                    $row.Cells['Steering'].Value = Get-SteeringText $r
+                    $row.Cells['Rtt'].Value = Get-RttText $r
+                }
                 $row.Tag.State = $state
                 $row.Tag.CheckedAt = Get-Date
                 if ($row.Tag.Next) {

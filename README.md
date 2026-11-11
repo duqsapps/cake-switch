@@ -21,6 +21,7 @@ It's a single PowerShell script. It uses the OpenSSH client built into Windows 1
 - **Router and access points**: manage several OpenWrt devices in one list and switch one, some or all of them. Devices are contacted in parallel, so an offline AP doesn't hold up the rest.
 - **Checks the real state**: "ON" means a `cake` qdisc is actually active (read back with `tc`), not just that the setting is ticked. It re-checks every minute, so it also follows changes made in LuCI.
 - **Takes care of flow offloading**: software and hardware flow offloading bypass CAKE, so turning CAKE on switches both off, and turning CAKE off puts them back the way they were.
+- **Shows the settings that matter for CAKE**: flow offloading, packet steering and CAKE's RTT (e.g. "30 ms (regional)") for each device, right in the list.
 - **Per-interface control**: switch every SQM queue on a device, or just one (e.g. `pppoe-wan`).
 - **One-click SSH key setup**: enter each device's root password once, and switching works without a password after that.
 - **Command line too**: `On`, `Off` and `Status` for scripts, desktop shortcuts, hotkeys and Task Scheduler.
