@@ -132,7 +132,7 @@ Flow offloading (*Network → Firewall → Routing/NAT Offloading* in LuCI) lets
 ## Troubleshooting
 
 - **"SSH ... failed: Permission denied"**: select the device and click **Setup SSH key**.
-- **"Host key verification failed"**: the router was reinstalled. Remove its line from `%USERPROFILE%\.ssh\known_hosts`, for example with `ssh-keygen -R 192.168.1.1`.
+- **"The device's SSH host key changed (replaced device?)"**: the device at that address was replaced, reset or reinstalled. Select it and click **Setup SSH key**: it shows the new key's fingerprint and, if you type `yes`, forgets the old key, accepts the new one and installs your key on the device (enter its password once). If you didn't replace or reset it, answer no: a changed key can also mean someone is impersonating the device.
 - **"no SQM queues found"**: install and configure `luci-app-sqm` on that device first.
 - **"Enabled, not active"**: SQM is enabled but no cake qdisc is installed. Either the queue uses another qdisc (e.g. `fq_codel`) or SQM failed to start. Check `logread | grep SQM` on the router.
 - **Very old router firmware** whose dropbear doesn't support ed25519 keys: create an RSA key with `ssh-keygen -t rsa -b 4096 -f %USERPROFILE%\.ssh\id_rsa_router`. Then set `"KeyFile"` in `cake-switch.json` to that path and run the key setup again.

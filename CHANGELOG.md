@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0 (2026-11-12)
+
+- Replacing a router or AP at the same address no longer breaks things for good: its status says the SSH host key changed, and **Setup SSH key** shows the new key's fingerprint and, after you confirm, swaps the old key for the new one and installs your key on the new device in one go.
+
 ## 1.8.0 (2026-11-11)
 
 - Turning CAKE on now saves the firewall's software and hardware flow offloading settings on the device and switches both off, because offloaded traffic bypasses CAKE. Turning CAKE off turns back on only what it turned off, and only if it's still off, so changes you make in LuCI meanwhile are kept. The firewall is only reloaded when a setting actually changes. The saved state is kept on the device (`/etc/cake-switch.offload`), so it works from any PC.

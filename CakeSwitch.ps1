@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.8.0'
+$AppVersion = '1.9.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -350,8 +350,9 @@ function Complete-CakeJob($job) {
     if ($p.ExitCode -ne 0 -and -not $result.Error) {
         if ($p.ExitCode -eq 255) {
             $hint = ''
-            if ($err -match 'Host key verification failed') {
-                $hint = "  (the device's host key changed: if that is expected, run: ssh-keygen -R $($d.Address))"
+            if ($err -match 'Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED') {
+                $result.Error = "The device's SSH host key changed (replaced device?). If you replaced it, select it and click 'Setup SSH key'."
+                return $result
             } elseif ($err -match 'Permission denied') {
                 $hint = "  (SSH key not installed on this device? use 'Setup SSH key')"
             }
@@ -464,6 +465,42 @@ function Format-Status($r) {
 
 # --- SSH key setup (interactive, asks for the device password once) -----------------------------
 
+# A replaced device at the same address has a new SSH host key, and ssh refuses to connect to it
+# (a changed key can also mean someone is impersonating the device). Show the new key's fingerprint
+# and, only if the user confirms the device was replaced, forget the old key, so the connection that
+# follows accepts the new one. Never done without asking.
+function Confirm-ReplacedHostKey($d) {
+    $argList = @('-o', 'BatchMode=yes') + (Get-SshArgs $d) + @("$($d.User)@$($d.Address)", 'exit')
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Get-SshExe
+    $psi.Arguments = ($argList | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardError = $true
+    $psi.RedirectStandardOutput = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $errTask = $p.StandardError.ReadToEndAsync()
+    [void]$p.StandardOutput.ReadToEnd()
+    if (-not $p.WaitForExit(20000)) { try { $p.Kill() } catch { }; return $true }
+    $err = $errTask.Result
+    if ($err -notmatch 'REMOTE HOST IDENTIFICATION HAS CHANGED|Host key verification failed') { return $true }
+
+    $fp = [regex]::Match($err, 'SHA256:[A-Za-z0-9+/=]+').Value
+    Write-Host ''
+    Write-Host "The SSH host key of $($d.Name) ($($d.Address)) has changed." -ForegroundColor Yellow
+    Write-Host 'That is expected if you replaced or reset the device. If you did not, it can mean someone'
+    Write-Host 'is impersonating it, so do not continue.'
+    if ($fp) { Write-Host "New key fingerprint: $fp" }
+    $answer = Read-Host 'Did you replace or reset this device? Type yes to trust the new key'
+    if ($answer -ne 'yes') { Write-Host 'Cancelled. The old host key was kept, nothing was changed.'; return $false }
+    $keygen = Join-Path (Split-Path (Get-SshExe)) 'ssh-keygen.exe'
+    $hostName = if ([int]$d.Port -eq 22) { $d.Address } else { "[$($d.Address)]:$($d.Port)" }
+    & $keygen -R $hostName
+    if ($LASTEXITCODE -ne 0) { throw "ssh-keygen -R $hostName failed." }
+    Write-Host 'Old host key removed; the new one is accepted on the next connection.'
+    return $true
+}
+
 function Install-SshKey($d) {
     $problem = Get-DeviceProblem $d
     if ($problem) { throw $problem }
@@ -479,6 +516,7 @@ function Install-SshKey($d) {
         & $keygen -q -t ed25519 -N $empty -f $key
         if ($LASTEXITCODE -ne 0) { throw 'ssh-keygen failed.' }
     }
+    if (-not (Confirm-ReplacedHostKey $d)) { return }
     $pub = (Get-Content -LiteralPath "$key.pub" -Raw).Trim()
     if ($pub -match "'") { throw 'Unexpected character in public key.' }
     Write-Host "Installing public key on $($d.Name) ($($d.User)@$($d.Address)). Enter the device's password when asked."
