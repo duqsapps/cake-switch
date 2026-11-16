@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.10.0 (2026-11-16)
+
+- New status line under the device list for a router with an "agent flowtable" (`ft_agent`, set up via the fw4 include `firewall.agent_offload`): *active*, *not needed (global offload covers it)*, **NOT loaded** or **conflict**. It's read after the firewall reload, so it's up to date after every On/Off. Devices without it show nothing.
+
 ## 1.9.0 (2026-11-12)
 
 - Replacing a router or AP at the same address no longer breaks things for good: its status says the SSH host key changed, and **Setup SSH key** shows the new key's fingerprint and, after you confirm, swaps the old key for the new one and installs your key on the new device in one go.

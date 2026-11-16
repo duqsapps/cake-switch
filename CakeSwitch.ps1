@@ -48,7 +48,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 # The one place the version is set; the installer (installer/CakeSwitch.nsi) reads it from here.
-$AppVersion = '1.9.0'
+$AppVersion = '1.10.0'
 $ScriptPath = $PSCommandPath
 # Not a param() default: with [CmdletBinding()], Windows PowerShell 5.1 leaves $PSScriptRoot empty there.
 # The setup program installs a CakeSwitch.installed marker: Program Files isn't writable, so the
@@ -162,6 +162,11 @@ function Get-SshArgs($d) {
 #   STEER <packet_steering 0|1|2|-> <number of CPUs>
 #   OFFLOAD <software 0|1|-> <hardware 0|1|-> <saved software> <saved hardware>
 #         (firewall flow offloading now, and what it was before CAKE was turned on; '-' = not set)
+#   AGENTFT <installed 0|1> <loaded 0|1> <globalft 0|1>
+#         (only on a device with the "agent flowtable" set up: fw4 include firewall.agent_offload and
+#          /etc/agent-offload.sh, which loads the hardware-offload flowtable ft_agent for LAN <-> agent
+#          subnet traffic while global offloading is off; loaded = ft_agent exists, globalft = fw4's own
+#          flowtable ft exists. Printed last, after any firewall reload above has finished.)
 #   ERROR <message>
 # Flow offloading bypasses the qdiscs, so CAKE can't shape that traffic. Turning CAKE on saves the
 # offloading settings in /etc/cake-switch.offload on the device and turns both off; turning CAKE off
@@ -261,6 +266,11 @@ if [ $hasfw = 1 ]; then
     saved="- -"; [ -f "$OFFL" ] && saved=$(cat "$OFFL")
     echo "OFFLOAD $(uci -q get "$FW.flow_offloading" || echo -) $(uci -q get "$FW.flow_offloading_hw" || echo -) $saved"
 fi
+if uci -q get firewall.agent_offload >/dev/null 2>&1 && [ -f /etc/agent-offload.sh ]; then
+    al=0; nft list flowtable inet fw4 ft_agent >/dev/null 2>&1 && al=1
+    ag=0; nft list flowtable inet fw4 ft >/dev/null 2>&1 && ag=1
+    echo "AGENTFT 1 $al $ag"
+fi
 '@
 
 # --- running it: jobs are started without waiting, so several devices are handled in parallel ---
@@ -308,7 +318,7 @@ function Test-CakeJobDone($job) {
 
 function Complete-CakeJob($job) {
     $d = $job.Device
-    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Offload = $null; Steering = $null; Error = $job.Error }
+    $result = [pscustomobject]@{ Device = $d; Active = $false; Enabled = $false; Queues = @(); Offload = $null; Steering = $null; AgentFt = $null; Error = $job.Error }
     if (-not $job.Process) { return $result }
     $p = $job.Process
     if (-not $p.HasExited) {
@@ -339,6 +349,9 @@ function Complete-CakeJob($job) {
                     $result.Offload = [pscustomobject]@{ Software = ($f[1] -eq '1'); Hardware = ($f[2] -eq '1')
                                                          Saved = ($f[3] -ne '-'); SavedSoftware = ($f[3] -eq '1'); SavedHardware = ($f[4] -eq '1') }
                 }
+            }
+            'AGENTFT' {
+                if ($f.Count -ge 4 -and $f[1] -eq '1') { $result.AgentFt = [pscustomobject]@{ Loaded = ($f[2] -eq '1'); GlobalFt = ($f[3] -eq '1') } }
             }
             'STEER' {
                 $cpus = 0; if ($f.Count -gt 2) { [void][int]::TryParse($f[2], [ref]$cpus) }
@@ -441,6 +454,18 @@ function Get-SteeringText($r) {
     }
 }
 
+# The router's "agent flowtable" (ft_agent: LAN <-> agent subnet hardware-offloaded while CAKE is on).
+# $null when the device doesn't have it, else Text and Level (Ok, Warn, Error).
+function Get-AgentFtStatus($r) {
+    $a = $r.AgentFt
+    if (-not $a) { return $null }
+    $s = { param($level, $text) [pscustomobject]@{ Level = $level; Text = $text } }
+    if ($a.Loaded -and $a.GlobalFt) { return & $s 'Error' 'Agent flowtable conflict (ft_agent and global ft both loaded - firewall reload failed?)' }
+    if ($a.Loaded) { return & $s 'Ok' 'Agent flowtable: active (LAN <-> agent hardware-offloaded)' }
+    if ($a.GlobalFt) { return & $s 'Ok' 'Agent flowtable: not needed (global offload covers it)' }
+    return & $s 'Warn' 'Agent flowtable: NOT loaded (LAN <-> agent runs through the CPU - check: logread | grep agent-offload)'
+}
+
 function Format-Status($r) {
     $head = "$($r.Device.Name) [$($r.Device.Address)]: $(Get-StateText $r)"
     if ($r.Active -and -not $r.Error) { $limits = Get-LimitText $r; if ($limits) { $head += " ($limits)" } }
@@ -460,6 +485,8 @@ function Format-Status($r) {
         if ($o.Saved) { $line += " (before CAKE: software {0}, hardware {1}; restored when CAKE is turned off)" -f (& $onOff $o.SavedSoftware), (& $onOff $o.SavedHardware) }
         $lines += $line
     }
+    $ag = Get-AgentFtStatus $r
+    if ($ag) { $lines += "  $($ag.Text)" }
     return $lines -join "`r`n"
 }
 
@@ -586,9 +613,9 @@ function Show-Gui {
 
     $form = New-Object System.Windows.Forms.Form
     $form.Text = "CAKE Switch $AppVersion"
-    $form.ClientSize = New-Object System.Drawing.Size(1140, 392)
+    $form.ClientSize = New-Object System.Drawing.Size(1140, 414)
     # Wide enough for the button row and the "Start with Windows" box (about x=810).
-    $form.MinimumSize = New-Object System.Drawing.Size(1000, 330)
+    $form.MinimumSize = New-Object System.Drawing.Size(1000, 352)
     $form.StartPosition = 'CenterScreen'
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
 
@@ -615,8 +642,16 @@ function Show-Gui {
     foreach ($n in @('Status', 'Offload', 'Steering', 'Rtt')) { $grid.Columns[$n].ReadOnly = $true }
     $grid.Columns['Status'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
+    # One line for the router's agent flowtable; empty when no device has one.
+    $agentLabel = New-Object System.Windows.Forms.Label
+    $agentLabel.Location = New-Object System.Drawing.Point(12, 268)
+    $agentLabel.Size = New-Object System.Drawing.Size(1116, 18)
+    $agentLabel.Anchor = 'Bottom, Left, Right'
+    $agentLabel.AutoEllipsis = $true
+    $agentLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+
     $info = New-Object System.Windows.Forms.Label
-    $info.Location = New-Object System.Drawing.Point(12, 268)
+    $info.Location = New-Object System.Drawing.Point(12, 290)
     $info.Size = New-Object System.Drawing.Size(1116, 34)
     $info.Anchor = 'Bottom, Left, Right'
     $info.ForeColor = [System.Drawing.Color]::DimGray
@@ -628,7 +663,7 @@ function Show-Gui {
                      @('Add', 'Add device'), @('Remove', 'Remove'), @('Key', 'Setup SSH key'))) {
         $btn = New-Object System.Windows.Forms.Button
         $btn.Text = $b[1]
-        $btn.Location = New-Object System.Drawing.Point($x, 314)
+        $btn.Location = New-Object System.Drawing.Point($x, 336)
         $btn.Size = New-Object System.Drawing.Size(100, 32)
         $btn.Anchor = 'Bottom, Left'
         $form.Controls.Add($btn)
@@ -640,14 +675,14 @@ function Show-Gui {
     $autoBox = New-Object System.Windows.Forms.CheckBox
     $autoBox.Text = 'Start with Windows'
     $autoBox.AutoSize = $true
-    $autoBox.Location = New-Object System.Drawing.Point(($x + 6), 310)
+    $autoBox.Location = New-Object System.Drawing.Point(($x + 6), 332)
     $autoBox.Anchor = 'Bottom, Left'
     $form.Controls.Add($autoBox)
     (New-Object System.Windows.Forms.ToolTip).SetToolTip($autoBox, 'Start CAKE Switch when you sign in to Windows, minimized to the tray.')
     $offloadBox = New-Object System.Windows.Forms.CheckBox
     $offloadBox.Text = 'Turn offloading off with CAKE'
     $offloadBox.AutoSize = $true
-    $offloadBox.Location = New-Object System.Drawing.Point(($x + 6), 332)
+    $offloadBox.Location = New-Object System.Drawing.Point(($x + 6), 354)
     $offloadBox.Anchor = 'Bottom, Left'
     $offloadBox.Checked = [bool]$Config.ManageOffload
     $form.Controls.Add($offloadBox)
@@ -665,12 +700,12 @@ function Show-Gui {
     $intervalLabel = New-Object System.Windows.Forms.Label
     $intervalLabel.Text = 'Check for changes:'
     $intervalLabel.AutoSize = $true
-    $intervalLabel.Location = New-Object System.Drawing.Point(12, 362)
+    $intervalLabel.Location = New-Object System.Drawing.Point(12, 384)
     $intervalLabel.Anchor = 'Bottom, Left'
     $form.Controls.Add($intervalLabel)
     $intervalBox = New-Object System.Windows.Forms.ComboBox
     $intervalBox.DropDownStyle = [System.Windows.Forms.ComboBoxStyle]::DropDownList
-    $intervalBox.Location = New-Object System.Drawing.Point(130, 358)
+    $intervalBox.Location = New-Object System.Drawing.Point(130, 380)
     $intervalBox.Size = New-Object System.Drawing.Size(120, 24)
     $intervalBox.Anchor = 'Bottom, Left'
     foreach ($c in $intervalChoices) { [void]$intervalBox.Items.Add($c[1]) }
@@ -679,7 +714,7 @@ function Show-Gui {
     $intervalNote.Text = 'Pointing at the tray icon (or opening its menu or this window) always checks right away.'
     $intervalNote.AutoSize = $true
     $intervalNote.ForeColor = [System.Drawing.Color]::DimGray
-    $intervalNote.Location = New-Object System.Drawing.Point(262, 362)
+    $intervalNote.Location = New-Object System.Drawing.Point(262, 384)
     $intervalNote.Anchor = 'Bottom, Left'
     $form.Controls.Add($intervalNote)
 
@@ -693,7 +728,7 @@ function Show-Gui {
         $i = $grid.Rows.Add($d.Name, $d.Address, $d.User, "$($d.Port)", $d.Interface, '', '', '', '')
         # Job = running ssh job; Next = action clicked while busy, started when the job finishes.
         # State = last result (ON / OFF / Error / Enabled, not active), or Working while switching.
-        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = ''; CheckedAt = [datetime]::MinValue }
+        $grid.Rows[$i].Tag = [pscustomobject]@{ Job = $null; Next = $null; Details = ''; State = ''; Limits = ''; AgentFt = $null; CheckedAt = [datetime]::MinValue }
         return $grid.Rows[$i]
     }
 
@@ -714,6 +749,18 @@ function Show-Gui {
         # Keep the default (white) text on a selected row: green/red on the blue highlight is hard to read.
         $cell.ToolTipText = $details
         $row.Tag.Details = $details
+    }
+
+    # The agent flowtable line, from each row's last result (device name in front when several have one).
+    function Update-AgentFtLabel {
+        $items = @(foreach ($row in $grid.Rows) { if ($row.Tag -and $row.Tag.AgentFt) { [pscustomobject]@{ Name = "$($row.Cells['Name'].Value)"; S = $row.Tag.AgentFt } } })
+        $text = @($items | ForEach-Object { if ($items.Count -gt 1) { "$($_.Name): $($_.S.Text)" } else { $_.S.Text } }) -join '     '
+        $levels = @($items | ForEach-Object { $_.S.Level })
+        $color = if ($levels -contains 'Error') { [System.Drawing.Color]::FromArgb(200, 0, 0) }
+                 elseif ($levels -contains 'Warn') { $StateColors.Error }
+                 else { [System.Drawing.Color]::FromArgb(0, 128, 0) }
+        if ($agentLabel.Text -ne $text) { $agentLabel.Text = $text }
+        if ($agentLabel.ForeColor -ne $color) { $agentLabel.ForeColor = $color }
     }
 
     function Start-Row($row, [string]$verb, [switch]$Quiet) {
@@ -742,7 +789,7 @@ function Show-Gui {
             $row.Tag.Job = $null
             # No message boxes in here: this runs every 200 ms. Errors go into the row's status instead.
             try {
-                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @(); Offload = $null; Steering = $null } }
+                try { $r = Complete-CakeJob $job } catch { $r = [pscustomobject]@{ Device = $job.Device; Active = $false; Enabled = $false; Error = $_.Exception.Message; Queues = @(); Offload = $null; Steering = $null; AgentFt = $null } }
                 $state = Get-StateText $r
                 $limits = if ($state -eq 'ON') { Get-LimitText $r } else { '' }
                 $row.Tag.Limits = $limits
@@ -757,6 +804,7 @@ function Show-Gui {
                     $row.Cells['Offload'].Value = Get-OffloadText $r
                     $row.Cells['Steering'].Value = Get-SteeringText $r
                     $row.Cells['Rtt'].Value = Get-RttText $r
+                    $row.Tag.AgentFt = Get-AgentFtStatus $r
                 }
                 $row.Tag.State = $state
                 $row.Tag.CheckedAt = Get-Date
@@ -771,6 +819,7 @@ function Show-Gui {
                 try { $row.Cells['Status'].Value = "Error: $($_.Exception.Message)" } catch { }
             }
         }
+        try { Update-AgentFtLabel } catch { }
         try { Update-Tray } catch { }
         try { if ($showEvent.WaitOne(0)) { Show-Window } } catch { }
     })
@@ -1057,7 +1106,7 @@ function Show-Gui {
     $menu.Add_Opening({ try { Update-Quietly } catch { } })
 
     foreach ($d in $Config.Devices) { [void](Add-DeviceRow $d) }
-    $form.Controls.AddRange(@($grid, $info))
+    $form.Controls.AddRange(@($grid, $agentLabel, $info))
     $form.Add_Shown({ try { $grid.ClearSelection() } catch { } })
     # Minimising or closing the window only hides it; the app keeps running in the tray until Exit.
     $form.Add_Resize({
