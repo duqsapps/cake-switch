@@ -2,8 +2,8 @@
 
 ## 1.10.0 (2026-11-16)
 
-- New **Agent flowtable** column next to **Global flow offloading**, for a router with an "agent flowtable" (`ft_agent`, set up via the fw4 include `firewall.agent_offload`): *active* or *not needed* (green), **NOT loaded** (orange) or **conflict** (red); hover it for the full text. It's read after the firewall reload, so it's up to date after every On/Off. The column only appears when a device has it.
-- The flow offloading column is now called **Global flow offloading** and shows hardware offloading as **hw** instead of "sw + hw". OpenWrt needs the software option on for hardware offloading to work, so both on means hardware offloading; the hardware option alone shows as "off (hw needs sw)". The column shows only the current setting, no longer "(... on without CAKE)"; the details still show what is restored when CAKE is turned off.
+- New **Agent flowtable** column next to **Global flow offloading**, for a router with an "agent flowtable" (`ft_agent`, set up via the fw4 include `firewall.agent_offload`): **active** (bold green), *not needed* (plain text), **NOT loaded** (orange) or **conflict** (red); hover it for the full text. It's read after the firewall reload, so it's up to date after every On/Off. The column only appears when a device has it.
+- The flow offloading column is now called **Global flow offloading** and shows hardware offloading as **hw** (bold green, like an active agent flowtable) instead of "sw + hw". Both columns are always wide enough for their full header. OpenWrt needs the software option on for hardware offloading to work, so both on means hardware offloading; the hardware option alone shows as "off (hw needs sw)". The column shows only the current setting, no longer "(... on without CAKE)"; the details still show what is restored when CAKE is turned off.
 
 ## 1.9.0 (2026-11-12)
 

@@ -643,8 +643,15 @@ function Show-Gui {
         [void]$grid.Columns.Add($col)
     }
     foreach ($n in @('Status', 'Offload', 'AgentFt', 'Steering', 'Rtt')) { $grid.Columns[$n].ReadOnly = $true }
-    $grid.Columns['AgentFt'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    # Never narrower than the header text, so "Agent flowtable" isn't cut down to "Agent".
+    foreach ($n in @('Offload', 'AgentFt', 'Steering')) {
+        $col = $grid.Columns[$n]
+        $col.MinimumWidth = [System.Windows.Forms.TextRenderer]::MeasureText($col.HeaderText, $form.Font).Width + 24
+    }
     $grid.Columns['AgentFt'].Visible = $false
+    # Bold green for "it's on": hw in Global flow offloading, active in Agent flowtable.
+    $BoldFont = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    $OkGreen = [System.Drawing.Color]::FromArgb(0, 128, 0)
     $grid.Columns['Status'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
 
     $info = New-Object System.Windows.Forms.Label
@@ -792,7 +799,11 @@ function Show-Gui {
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
                 if (-not $r.Error) {
-                    $row.Cells['Offload'].Value = Get-OffloadText $r
+                    $offText = Get-OffloadText $r
+                    $offCell = $row.Cells['Offload']
+                    $offCell.Value = $offText
+                    if ($offText -eq 'hw') { $offCell.Style.Font = $BoldFont; $offCell.Style.ForeColor = $OkGreen }
+                    else { $offCell.Style.Font = $null; $offCell.Style.ForeColor = [System.Drawing.Color]::Empty }
                     $row.Cells['Steering'].Value = Get-SteeringText $r
                     $row.Cells['Rtt'].Value = Get-RttText $r
                     $ag = Get-AgentFtStatus $r
@@ -801,7 +812,13 @@ function Show-Gui {
                     if ($ag) {
                         $cell.Value = $ag.Short
                         $cell.ToolTipText = $ag.Text
-                        $cell.Style.ForeColor = switch ($ag.Level) { 'Error' { [System.Drawing.Color]::FromArgb(200, 0, 0) } 'Warn' { $StateColors.Error } default { [System.Drawing.Color]::FromArgb(0, 128, 0) } }
+                        if ($ag.Short -eq 'not needed') {
+                            # Plain text: nothing to see here, global offloading covers it.
+                            $cell.Style.Font = $null; $cell.Style.ForeColor = [System.Drawing.Color]::Empty
+                        } else {
+                            $cell.Style.Font = $BoldFont
+                            $cell.Style.ForeColor = switch ($ag.Level) { 'Error' { [System.Drawing.Color]::FromArgb(200, 0, 0) } 'Warn' { $StateColors.Error } default { $OkGreen } }
+                        }
                     } else { $cell.Value = ''; $cell.ToolTipText = '' }
                 }
                 $row.Tag.State = $state
