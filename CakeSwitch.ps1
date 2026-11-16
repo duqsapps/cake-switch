@@ -432,11 +432,13 @@ function Get-RttText($r) {
     return ($vals -join ' / ')
 }
 
-# Firewall flow offloading, e.g. "sw + hw", "off" or "off (sw + hw on without CAKE)" (sw/hw = software/hardware).
+# Firewall flow offloading, e.g. "hw", "sw", "off" or "off (hw on without CAKE)" (sw/hw = software/hardware).
+# fw4 needs flow_offloading=1 for flow_offloading_hw=1 to do anything, so both set = hardware offloading
+# ("hw"), and hardware alone does nothing.
 function Get-OffloadText($r) {
     $o = $r.Offload
     if (-not $o) { return 'n/a' }
-    $kind = { param($sw, $hw) if ($sw -and $hw) { 'sw + hw' } elseif ($sw) { 'sw' } elseif ($hw) { 'hw' } else { 'off' } }
+    $kind = { param($sw, $hw) if ($sw -and $hw) { 'hw' } elseif ($sw) { 'sw' } elseif ($hw) { 'off (hw needs sw)' } else { 'off' } }
     $now = & $kind $o.Software $o.Hardware
     if ($o.Saved -and ($o.SavedSoftware -or $o.SavedHardware)) { $now += " ($(& $kind $o.SavedSoftware $o.SavedHardware) on without CAKE)" }
     return $now

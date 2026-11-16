@@ -3,6 +3,7 @@
 ## 1.10.0 (2026-11-16)
 
 - New status line under the device list for a router with an "agent flowtable" (`ft_agent`, set up via the fw4 include `firewall.agent_offload`): *active*, *not needed (global offload covers it)*, **NOT loaded** or **conflict**. It's read after the firewall reload, so it's up to date after every On/Off. Devices without it show nothing.
+- The **Flow offloading** column shows hardware offloading as **hw** instead of "sw + hw". OpenWrt needs the software option on for hardware offloading to work, so both on means hardware offloading; the hardware option alone shows as "off (hw needs sw)".
 
 ## 1.9.0 (2026-11-12)
 
