@@ -458,14 +458,14 @@ function Get-SteeringText($r) {
 }
 
 # The router's "agent flowtable" (ft_agent: LAN <-> agent subnet hardware-offloaded while CAKE is on).
-# $null when the device doesn't have it, else Short (for the window's column), Text and Level (Ok, Warn, Error).
+# $null when the device doesn't have it, else Short (for the window's column), Text and Level (Ok, Info, Warn, Error).
 function Get-AgentFtStatus($r) {
     $a = $r.AgentFt
     if (-not $a) { return $null }
     $s = { param($level, $short, $text) [pscustomobject]@{ Level = $level; Short = $short; Text = $text } }
     if ($a.Loaded -and $a.GlobalFt) { return & $s 'Error' 'conflict' 'Agent flowtable conflict (ft_agent and global ft both loaded - firewall reload failed?)' }
     if ($a.Loaded) { return & $s 'Ok' 'active' 'Agent flowtable: active (LAN <-> agent hardware-offloaded)' }
-    if ($a.GlobalFt) { return & $s 'Ok' 'not needed' 'Agent flowtable: not needed (global offload covers it)' }
+    if ($a.GlobalFt) { return & $s 'Info' 'not needed' 'Agent flowtable: not needed (global offload covers it)' }
     return & $s 'Warn' 'NOT loaded' 'Agent flowtable: NOT loaded (LAN <-> agent runs through the CPU - check: logread | grep agent-offload)'
 }
 
@@ -643,9 +643,11 @@ function Show-Gui {
         [void]$grid.Columns.Add($col)
     }
     foreach ($n in @('Status', 'Offload', 'AgentFt', 'Steering', 'Rtt')) { $grid.Columns[$n].ReadOnly = $true }
-    $grid.Columns['AgentFt'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    # Wide enough for the whole header (a narrow column wraps it to just "Agent").
+    $grid.Columns['AgentFt'].MinimumWidth = 120
     $grid.Columns['AgentFt'].Visible = $false
-    $grid.Columns['Status'].DefaultCellStyle.Font = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    $boldFont = New-Object System.Drawing.Font('Segoe UI', 9, [System.Drawing.FontStyle]::Bold)
+    $grid.Columns['Status'].DefaultCellStyle.Font = $boldFont
 
     $info = New-Object System.Windows.Forms.Label
     $info.Location = New-Object System.Drawing.Point(12, 268)
@@ -748,6 +750,16 @@ function Show-Gui {
         $row.Tag.Details = $details
     }
 
+    # Ok = bold green (offloading active), Warn = bold orange, Error = bold red, anything else = normal text.
+    function Set-CellLevel($cell, [string]$level) {
+        switch ($level) {
+            'Ok'    { $cell.Style.Font = $boldFont; $cell.Style.ForeColor = [System.Drawing.Color]::FromArgb(0, 128, 0) }
+            'Warn'  { $cell.Style.Font = $boldFont; $cell.Style.ForeColor = $StateColors.Error }
+            'Error' { $cell.Style.Font = $boldFont; $cell.Style.ForeColor = [System.Drawing.Color]::FromArgb(200, 0, 0) }
+            default { $cell.Style.Font = $null; $cell.Style.ForeColor = [System.Drawing.Color]::Empty }
+        }
+    }
+
     # The Agent flowtable column, shown only while some device has one (see Get-AgentFtStatus).
     function Update-AgentFtColumn {
         $show = [bool]@($grid.Rows | Where-Object { $_.Tag -and $_.Tag.AgentFt }).Count
@@ -792,7 +804,9 @@ function Show-Gui {
                 }
                 Set-RowStatus $row $text $color (Format-Status $r)
                 if (-not $r.Error) {
-                    $row.Cells['Offload'].Value = Get-OffloadText $r
+                    $offText = Get-OffloadText $r
+                    $row.Cells['Offload'].Value = $offText
+                    Set-CellLevel $row.Cells['Offload'] $(if ($offText -eq 'hw') { 'Ok' } else { '' })
                     $row.Cells['Steering'].Value = Get-SteeringText $r
                     $row.Cells['Rtt'].Value = Get-RttText $r
                     $ag = Get-AgentFtStatus $r
@@ -801,8 +815,8 @@ function Show-Gui {
                     if ($ag) {
                         $cell.Value = $ag.Short
                         $cell.ToolTipText = $ag.Text
-                        $cell.Style.ForeColor = switch ($ag.Level) { 'Error' { [System.Drawing.Color]::FromArgb(200, 0, 0) } 'Warn' { $StateColors.Error } default { [System.Drawing.Color]::FromArgb(0, 128, 0) } }
-                    } else { $cell.Value = ''; $cell.ToolTipText = '' }
+                        Set-CellLevel $cell $ag.Level
+                    } else { $cell.Value = ''; $cell.ToolTipText = ''; Set-CellLevel $cell '' }
                 }
                 $row.Tag.State = $state
                 $row.Tag.CheckedAt = Get-Date
