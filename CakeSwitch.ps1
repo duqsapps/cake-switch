@@ -636,7 +636,7 @@ function Show-Gui {
     $grid.BackgroundColor = [System.Drawing.SystemColors]::Window
     foreach ($c in @(@('Name', 'Name', 20), @('Address', 'IP address', 16), @('User', 'User', 8), @('Port', 'Port', 6),
                      @('Interface', 'Interface', 11), @('Status', 'Status (double-click for details)', 30),
-                     @('Offload', 'Flow offloading (sw/hw)', 25), @('AgentFt', 'Agent flowtable', 14), @('Steering', 'Packet steering', 15), @('Rtt', 'CAKE RTT', 18))) {
+                     @('Offload', 'Global flow offloading', 25), @('AgentFt', 'Agent flowtable', 14), @('Steering', 'Packet steering', 15), @('Rtt', 'CAKE RTT', 18))) {
         $col = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
         $col.Name = $c[0]; $col.HeaderText = $c[1]; $col.FillWeight = $c[2]
         $col.SortMode = 'NotSortable'
